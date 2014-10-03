@@ -1,0 +1,31 @@
+#
+# Git Ignore List
+#
+
+# Targets
+*.o
+bin
+
+# Temporary files
+*~
+*.swp
+
+# Databases
+db
+db-c
+db-m
+
+# Supporting files that should not be checked in
+data
+*.bin
+nbproject
+
+# Temporary analysis results
+asm*
+*.s
+
+# Profiling results
+cachegrind.out.*
+gmon.*
+massif.out.*
+
