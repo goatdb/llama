@@ -102,7 +102,7 @@ typedef ll_mlcsr_ro_graph benchmarkable_graph_t;
 
 #ifdef BENCHMARK_WRITABLE
 #ifndef LL_DELETIONS
-#error "BENCHMARK_WRITABLE requires LL_DELETIONS"
+#warning "Attempting to use BENCHMARK_WRITABLE without LL_DELETIONS"
 #endif
 #endif
 
@@ -800,6 +800,8 @@ int main(int argc, char** argv)
 
 	// TODO This should be a bit more customizable
 	
+#ifndef LL_WRITABLE_USE_MEMORY_POOL
+
 	if (false) {
 		w_node_deallocator wdn;
 		w_edge_deallocator wde;
@@ -815,6 +817,8 @@ int main(int argc, char** argv)
 		while (ec --> 0) wde(new w_edge());
 		while (nc --> 0) wdn(new w_node());
 	}
+
+#endif
 
 
 	// Prepare the benchmark

@@ -41,6 +41,22 @@
 
 
 /**
+ * Malloc/Free Allocator
+ */
+template <typename T> struct ll_malloc_allocator {
+	inline T operator() (size_t bytes) { return (T) malloc(bytes); }
+};
+
+
+/**
+ * Malloc/Free Deallocator
+ */
+template <typename T> struct ll_free_deallocator {
+	inline void operator() (T buffer) { free(buffer); }
+};
+
+
+/**
  * NOP Deallocator
  */
 template <typename T> struct ll_nop_deallocator {
@@ -51,7 +67,11 @@ template <typename T> struct ll_nop_deallocator {
 /**
  * A growable block array
  */
-template <typename T, int _block_size2, class deallocator>
+template <typename T, int _block_size2, class deallocator,
+		 bool use_deallocator=true,
+		 class block_allocator=ll_malloc_allocator<void*>,
+		 class block_deallocator=ll_free_deallocator<void*>,
+		 bool use_block_deallocator=true>
 class ll_growable_array {
 
 private:
@@ -61,6 +81,8 @@ private:
 	T** _arrays;
 
 	deallocator _deallocator;
+	block_allocator _block_allocator;
+	block_deallocator _block_deallocator;
 
 	ll_spinlock_t _lock;
 
@@ -76,9 +98,9 @@ public:
 		_blocks = blocks;
 		_size = 0;
 		_lock = 0;
-		_arrays = (T**) malloc(sizeof(T*) * _blocks);
+		_arrays = (T**) _block_allocator(sizeof(T*) * _blocks);
 		memset(_arrays, 0, sizeof(T*) * _blocks);
-		_arrays[0] = (T*) malloc(sizeof(T) * (1 << _block_size2));
+		_arrays[0] = (T*) _block_allocator(sizeof(T) * (1 << _block_size2));
 	}
 
 
@@ -87,15 +109,23 @@ public:
 	 */
 	inline ~ll_growable_array() {
 
-		for (int i = 0; i < _blocks; i++) {
-			if (_arrays[i] == NULL) break;
-			for (int j = 0; j < (1 << _block_size2); j++) {
-				if (_size-- <= 0) break;
-				_deallocator(_arrays[i][j]);
+		if (use_deallocator || use_block_deallocator) {
+
+			for (int i = 0; i < _blocks; i++) {
+				if (_arrays[i] == NULL) break;
+				if (use_deallocator) {
+					for (int j = 0; j < (1 << _block_size2); j++) {
+						if (_size-- <= 0) break;
+						_deallocator(_arrays[i][j]);
+					}
+				}
+				if (use_block_deallocator)
+					_block_deallocator(_arrays[i]);
 			}
-			free(_arrays[i]);
+
+			if (use_block_deallocator)
+				_block_deallocator(_arrays);
 		}
-		free(_arrays);
 	}
 
 
@@ -113,13 +143,17 @@ public:
 	 * Clear
 	 */
 	void clear() {
-		for (int i = 0; i < _blocks; i++) {
-			if (_arrays[i] == NULL) break;
-			for (int j = 0; j < (1 << _block_size2); j++) {
-				if (_size-- <= 0) break;
-				_deallocator(_arrays[i][j]);
+
+		if (use_deallocator) {
+			for (int i = 0; i < _blocks; i++) {
+				if (_arrays[i] == NULL) break;
+				for (int j = 0; j < (1 << _block_size2); j++) {
+					if (_size-- <= 0) break;
+					_deallocator(_arrays[i][j]);
+				}
 			}
 		}
+
 		_size = 0;
 	}
 
@@ -139,15 +173,16 @@ public:
 			int newBlock = _size >> _block_size2;
 			if (newBlock == _blocks) {
 				int n = _blocks * 2;
-				T** a = (T**) malloc(sizeof(T*) * n);
+				T** a = (T**) _block_allocator(sizeof(T*) * n);
 				memcpy(a, _arrays, sizeof(T*) * _blocks);
 				memset(&a[_blocks], 0, sizeof(T*) * (n - _blocks));
-				free(_arrays);
+				if (use_block_deallocator)
+					_block_deallocator(_arrays);
 				_arrays = a;
 				_blocks = n;
 			}
 			if (_arrays[newBlock] == NULL) {
-				_arrays[newBlock] = (T*) malloc(sizeof(T) * (1 << _block_size2));
+				_arrays[newBlock] = (T*) _block_allocator(sizeof(T) * (1 << _block_size2));
 			}
 		}
 
@@ -177,6 +212,44 @@ public:
 	inline T& operator[] (size_t index) const {
 		assert(index < (size_t) _size);
 		return _arrays[index >> _block_size2][index & ((1 << _block_size2) - 1)];
+	}
+
+
+	/**
+	 * Get the number of blocks in the array
+	 *
+	 * @return the number of blocks
+	 */
+	inline size_t block_count() const {
+		size_t b = _size >> _block_size2;
+		if ((_size & ((1 << _block_size2) - 1)) != 0) b++;
+		return b;
+	}
+
+
+	/**
+	 * Get a block
+	 *
+	 * @param b the block number
+	 * @return the block pointer
+	 */
+	inline T const * block(size_t b) const {
+		assert(b <= (_size >> _block_size2) && b <= _blocks);
+		return _arrays[b];
+	}
+
+
+	/**
+	 * Get the block size
+	 *
+	 * @param b the block
+	 * @return the number of elements in the block
+	 */
+	inline size_t block_size(size_t b) const {
+		assert(b <= (_size >> _block_size2) && b <= _blocks);
+		return b < (_size >> _block_size2)
+			? 1 << _block_size2
+			: (_size & ((1 << _block_size2) - 1));
 	}
 };
 

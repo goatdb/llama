@@ -139,8 +139,12 @@ public:
 	 */
 	virtual ~ll_writable_graph(void) {
 
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+		ll_free_w_pool();
+#else
 		delete_free_w_nodes();
 		delete_free_w_edges();
+#endif
 	}
 	
 
@@ -1973,6 +1977,10 @@ public:
 		_delFrozenEdges.store(0);
 
 		_vertices.clear();
+
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+		ll_free_w_pool();
+#endif
 
 		_deletions_out_map.clear();
 		_deletions_in_map.clear();

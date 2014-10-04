@@ -51,10 +51,15 @@
 #define THIRTY_TWO_NULLS			EIGHT_NULLS, EIGHT_NULLS, EIGHT_NULLS, EIGHT_NULLS
 
 #define LL_MAX_EDGE_PROPERTY_ID		16
+#define LL_WRITABLE_USE_MEMORY_POOL
 
 // HACK!!!
 #ifdef LL_ONE_VT
 #define LL_MAX_EDGE_PROPERTY_ID		0
+#endif
+
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+#include "llama/ll_mem_helper.h"
 #endif
 
 
@@ -275,6 +280,98 @@ public:
 };
 
 
+
+//==========================================================================//
+// Edge Allocator and Deallocator                                           //
+//==========================================================================//
+
+/**
+ * The writable edge NOOP deallocator
+ */
+struct w_edge_noop {
+
+	/**
+	 * Do nothing with a writable edge
+	 *
+	 * @param edge the writable edge
+	 */
+	void operator() (w_edge* edge) {
+	}
+};
+
+
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+
+static ll_memory_pool __w_pool;
+
+
+/**
+ * Generic allocator
+ */
+struct w_generic_allocator {
+
+	/**
+	 * Allocate a new object
+	 *
+	 * @param size the number of bytes
+	 * @return the new object
+	 */
+	void* operator() (size_t size) {
+		return __w_pool.allocate<char>(size);
+	}
+};
+
+
+/**
+ * The writable edge allocator
+ */
+struct w_edge_allocator {
+
+	/**
+	 * Allocate a new writable edge
+	 *
+	 * @return the writable edge
+	 */
+	w_edge* operator() (void) {
+		w_edge* w = __w_pool.allocate<w_edge>();
+		new (w) w_edge();
+		return w;
+	}
+};
+
+
+/**
+ * The writable edge deallocator
+ */
+struct w_edge_deallocator {
+
+	/**
+	 * Deallocate a writable edge
+	 *
+	 * @param edge the writable edge
+	 */
+	void operator() (w_edge* edge) {
+		// Nothing to do
+		// XXX This does not call destructor on edge property values
+	}
+};
+
+
+/**
+ * Helper types
+ */
+
+/// The out-edges
+typedef ll_growable_array<w_edge*, 4, w_edge_deallocator, false,
+		w_generic_allocator, ll_nop_deallocator<void*>, false> ll_w_out_edges_t;
+
+/// The in-edges
+typedef ll_growable_array<w_edge*, 4, w_edge_noop, false,
+		w_generic_allocator, ll_nop_deallocator<void*>, false> ll_w_in_edges_t;
+
+
+#else /* LL_WRITABLE_USE_MEMORY_POOL */
+
 #define FREE_W_EDGES_LENGTH		(4*8)
 static w_edge* __free_w_edges[FREE_W_EDGES_LENGTH] = { THIRTY_TWO_NULLS };
 
@@ -344,21 +441,6 @@ struct w_edge_deallocator {
 
 
 /**
- * The writable edge NOOP deallocator
- */
-struct w_edge_noop {
-
-	/**
-	 * Do nothing with a writable edge
-	 *
-	 * @param edge the writable edge
-	 */
-	void operator() (w_edge* edge) {
-	}
-};
-
-
-/**
  * Delete all w_edge's in the free list
  */
 inline void delete_free_w_edges(void) {
@@ -388,8 +470,15 @@ inline void delete_free_w_edges(void) {
 typedef ll_growable_array<w_edge*, 4, w_edge_deallocator> ll_w_out_edges_t;
 
 /// The in-edges
-typedef ll_growable_array<w_edge*, 4, w_edge_noop> ll_w_in_edges_t;
+typedef ll_growable_array<w_edge*, 4, w_edge_noop, false> ll_w_in_edges_t;
 
+#endif
+
+
+
+//==========================================================================//
+// Class: w_node                                                            //
+//==========================================================================//
 
 /**
  * A writable node
@@ -510,6 +599,72 @@ public:
 	}
 };
 
+
+
+//==========================================================================//
+// Node Allocator and Deallocator                                           //
+//==========================================================================//
+
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+
+/**
+ * The writable node allocator
+ */
+template <typename Output = w_node*>
+struct w_node_allocator_ext {
+
+	/**
+	 * Allocate a new writable node
+	 *
+	 * @return the writable node
+	 */
+	Output operator() (void) {
+		w_node* w = __w_pool.allocate<w_node>();
+		new (w) w_node();
+		return (Output) w;
+	}
+};
+
+
+/**
+ * The default writable node allocator
+ */
+typedef struct w_node_allocator_ext<> w_node_allocator;
+
+
+/**
+ * The writable node deallocator
+ */
+template <typename Input = w_node*>
+struct w_node_deallocator_ext {
+
+	/**
+	 * Deallocate a writable node
+	 *
+	 * @param node the writable node
+	 */
+	void operator() (Input node) {
+		// Nothing to do
+		// XXX This does not call destructor on node property values
+	}
+};
+
+
+/**
+ * The default writable node deallocator
+ */
+typedef struct w_node_deallocator_ext<> w_node_deallocator;
+
+
+/**
+ * Delete all w_node's in the free list
+ */
+inline void ll_free_w_pool(void) {
+	__w_pool.free();
+}
+
+
+#else /* LL_WRITABLE_USE_MEMORY_POOL */
 
 #define FREE_W_NODES_LENGTH			4
 static w_node* __free_w_nodes[FREE_W_NODES_LENGTH] = { FOUR_NULLS };
@@ -671,6 +826,7 @@ inline void delete_free_w_nodes(void) {
 
 #endif
 
+#endif /* ! LL_WRITABLE_USE_MEMORY_POOL */
 
 #endif /* LL_WRITABLE_ELEMENTS_H_ */
 

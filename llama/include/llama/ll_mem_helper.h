@@ -40,6 +40,132 @@
 #include <cstdlib>
 #include <vector>
 
+#include "llama/ll_lock.h"
+#include "llama/ll_utils.h"
+
+
+/**
+ * Memory pool
+ */
+class ll_memory_pool {
+
+	size_t _chunk_size;
+	ssize_t _retain_max;
+
+	std::vector<void*> _buffers;
+
+	ll_spinlock_t _lock;
+
+	size_t _last_used;
+	size_t _chunk_index;
+
+
+public:
+
+	/**
+	 * Initialize
+	 *
+	 * @param chunk_size the chunk size
+	 * @param retain_max the maximum number of chunks to retain (-1 = all)
+	 */
+	ll_memory_pool(size_t chunk_size = 32 * 1048576ul,
+			ssize_t retain_max = -1) {
+
+		_chunk_size = chunk_size;
+		_retain_max = retain_max;
+
+		_chunk_index = 0;
+		_last_used = 0;
+		_lock = 0;
+	}
+
+
+	/**
+	 * Destroy
+	 */
+	~ll_memory_pool() {
+
+		for (int i = ((int) _buffers.size()) - 1; i >= 0; i--) {
+			::free(_buffers[i]);
+		}
+	}
+
+
+	/**
+	 * Free the entire memory pool
+	 *
+	 * @param retain true to retain all allocated buffers (default)
+	 */
+	void free(bool retain=true) {
+
+		ll_spinlock_acquire(&_lock);
+
+		if (_retain_max >= 0 || !retain) {
+			ssize_t m = retain ? _retain_max : 0;
+			for (ssize_t i = ((ssize_t) _buffers.size()) - 1; i >= m; i--) {
+				::free(_buffers[i]);
+			}
+			_buffers.resize(std::min((size_t) _retain_max, _buffers.size()));
+		}
+
+		_chunk_index = 0;
+		_last_used = 0;
+
+		ll_spinlock_release(&_lock);
+	}
+
+
+	/**
+	 * Allocate memory
+	 *
+	 * @param num the number of elements
+	 * @return the allocated memory
+	 */
+	template<typename T> T* allocate(size_t num=1) {
+		
+		size_t bytes = sizeof(T) * num;
+		ll_spinlock_acquire(&_lock);
+
+		if (bytes > _chunk_size) {
+			LL_E_PRINT("The allocation is too large\n");
+			abort();
+		}
+
+		if (_buffers.empty()) {
+			void* b = malloc(_chunk_size);
+			if (b == NULL) {
+				LL_E_PRINT("** OUT OF MEMORY **\n");
+				abort();
+			}
+			_buffers.push_back(b);
+			_last_used = 0;
+		}
+
+		void* p = ((char*) _buffers[_chunk_index]) + _last_used;
+		_last_used += bytes;
+
+		if (_last_used > _chunk_size) {
+			_chunk_index++;
+			if (_chunk_index < _buffers.size()) {
+				p = _buffers[_chunk_index];
+			}
+			else {
+				p = malloc(_chunk_size);
+				if (p == NULL) {
+					LL_E_PRINT("** OUT OF MEMORY **\n");
+					abort();
+				}
+				_buffers.push_back(p);
+			}
+			_last_used = bytes;
+		}
+		
+		ll_spinlock_release(&_lock);
+
+		return (T*) p;
+	}
+};
+
 
 /**
  * Memory helper
