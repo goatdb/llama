@@ -37,7 +37,6 @@
 #ifndef LL_GEN_ERDOSRENYI_H_
 #define LL_GEN_ERDOSRENYI_H_
 
-#include <endian.h>
 #include <sstream>
 #include <string>
 #include <vector>

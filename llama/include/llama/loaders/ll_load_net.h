@@ -37,7 +37,6 @@
 #ifndef LL_LOAD_NET_H_
 #define LL_LOAD_NET_H_
 
-#include <endian.h>
 #include <sstream>
 
 #include "llama/ll_mem_array.h"

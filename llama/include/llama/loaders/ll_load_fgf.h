@@ -37,8 +37,15 @@
 #ifndef LL_LOAD_FGF_H_
 #define LL_LOAD_FGF_H_
 
-#include <endian.h>
 #include <sstream>
+
+#if defined(__linux__)
+#include <endian.h>
+#elif defined(__NetBSD__) // maybe also __FreeBSD__, not sure
+#include <sys/endian.h>
+#else
+#include <machine/endian.h>
+#endif
 
 #include "llama/ll_mem_array.h"
 #include "llama/ll_writable_graph.h"

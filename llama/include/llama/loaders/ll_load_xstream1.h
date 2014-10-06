@@ -38,7 +38,6 @@
 #define LL_LOAD_XSTREAM1_H_
 
 #include <cstdio>
-#include <endian.h>
 #include <sstream>
 
 #include "llama/ll_mem_array.h"
