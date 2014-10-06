@@ -516,10 +516,12 @@ public:
 		size_t et_capacity = values_length(level, max_nodes + 4,
 				max_adj_lists + 4, max_edges);
 		auto et = NEW_LL_ET<T>(et_capacity, max_nodes);
+#ifndef LL_PERSISTENCE
 		if (et == NULL) {
 			LL_E_PRINT("** out of memory ** cannot allocate the edge table\n");
 			abort();
 		}
+#endif
 		this->_values.push_back(et);
 
 		auto* b = this->_begin.new_level(max_nodes);
