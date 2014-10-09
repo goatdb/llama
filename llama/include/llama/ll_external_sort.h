@@ -37,7 +37,14 @@
 #ifndef LL_EXTERNAL_SORT_H_
 #define LL_EXTERNAL_SORT_H_
 
-#include <sys/sysinfo.h>
+#if defined(__linux__)
+#	include <sys/sysinfo.h>
+#elif defined(__NetBSD__)
+#	include <sys/param.h>
+#	include <sys/sysctl.h>
+#else
+#endif
+
 #include <sys/time.h>
 
 #include <algorithm>
@@ -152,6 +159,7 @@ public:
 
 			// Auto-tune
 
+#if defined(__linux__)
 			struct sysinfo s;
 			if (sysinfo(&s) < 0) {
 				perror("sysinfo");
@@ -172,6 +180,27 @@ public:
 
 			size_t max = (((size_t) s.mem_unit) * (s.freeram + s.bufferram))
 				+ cachedram;
+
+#elif defined(__NetBSD__)
+
+			struct uvmexp_sysctl u;
+			size_t u_len = sizeof(u);
+
+			int m[2];
+			m[0] = CTL_VM;
+			m[1] = VM_UVMEXP2;
+			
+			if (sysctl(m, 2, &u, &u_len, NULL, 0) != 0) {
+				perror("sysctl");
+				LL_E_PRINT("Cannot determine the amount of free memory\n");
+				abort();
+			}
+
+			size_t max = u.pagesize * (u.free + u.filepages);
+#else
+#error "Don't know how to determine the amount of free memory on this platform"
+#endif
+
 			if (max < 1048576ul) {
 				LL_E_PRINT("Not enough memory: %0.2lf KB\n", max/1024.0);
 				abort();

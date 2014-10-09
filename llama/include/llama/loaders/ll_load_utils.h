@@ -37,8 +37,6 @@
 #ifndef LL_LOAD_UTILS_H_
 #define LL_LOAD_UTILS_H_
 
-#include <sys/sysinfo.h>
-
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

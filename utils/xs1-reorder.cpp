@@ -50,6 +50,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <getopt.h>
+#include <libgen.h>
 #include <string>
 #include <unistd.h>
 

@@ -791,6 +791,36 @@ public:
 
 
 	/**
+	 * Extend the file to the given size
+	 *
+	 * WARNING: If fallocate() is not available, this will use ftruncate()
+	 * instead -- but without checking that the new size is actually
+	 * larger than the old size.
+	 *
+	 * @param fi the file index
+	 * @param offset the offset where start
+	 * @param length the length to add
+	 */
+	void extend_file(size_t fi, off_t offset, off_t length) {
+
+#if defined(__linux__)
+		int r = fallocate(file_for_index(fi), 0, offset, length);
+		if (r != 0) {
+			perror("fallocate");
+			abort();
+		}
+#else
+		// TODO Make this safer so that we always extend?
+		int r = ftruncate(file_for_index(fi), offset + length);
+		if (r != 0) {
+			perror("ftruncate");
+			abort();
+		}
+#endif
+	}
+
+
+	/**
 	 * Allocate a page-aligned space in a file
 	 *
 	 * @param fi the file index
@@ -822,11 +852,7 @@ public:
 
 		ll_spinlock_release(&_lengths_lock);
 
-		int r = fallocate(file_for_index(fi), 0, offset, s);
-		if (r != 0) {
-			perror("fallocate");
-			abort();
-		}
+		extend_file(fi, offset, s);
 
 		return offset;
 	}
@@ -872,11 +898,7 @@ public:
 
 		ll_spinlock_release(&_lengths_lock);
 
-		int r = fallocate(file_for_index(fi), 0, offset, s);
-		if (r != 0) {
-			perror("fallocate");
-			abort();
-		}
+		extend_file(fi, offset, s);
 
 		void* m = mmap(NULL, s, PROT_READ|PROT_WRITE, MAP_SHARED,
 				file_for_index(fi), offset);
@@ -941,7 +963,12 @@ public:
 			memset(&mr, 0, sizeof(mr));
 		}
 		else if (s < mr.mr_length) {
+#if defined(__linux__)
 			void* m = mremap(mr.mr_address, mr.mr_length, s, 0);
+#else
+			void* m = mremap(mr.mr_address, mr.mr_length,
+							mr.mr_address, s, MAP_FIXED);
+#endif
 			if (m == MAP_FAILED) {
 				perror("mremap");
 				abort();

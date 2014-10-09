@@ -62,6 +62,7 @@
 
 #include <sys/mman.h>
 #include <cstdint>
+#include <errno.h>
 #include <omp.h>
 
 

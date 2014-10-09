@@ -45,6 +45,7 @@
 #include <cmath>
 #include <omp.h>
 #include <getopt.h>
+#include <libgen.h>
 
 #include <algorithm>
 #include <iomanip>
