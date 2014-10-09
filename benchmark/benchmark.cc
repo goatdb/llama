@@ -210,6 +210,8 @@ static void print_time_and_confidence(FILE* f, const char* prefix, double t,
 }
 
 
+#if defined(__linux__)
+
 /**
  * The I/O info
  */
@@ -262,6 +264,8 @@ int getiostat(struct io_stat* io) {
 
 	return 0;
 }
+
+#endif
 
 
 
@@ -1175,8 +1179,10 @@ int main(int argc, char** argv)
 
 			benchmark->initialize();
 
+#if defined(__linux__)
 			struct io_stat io_start;
 			getiostat(&io_start);
+#endif
 			struct rusage r_start;
 			getrusage(RUSAGE_SELF, &r_start);
 			double t_start = ll_get_time_ms();
@@ -1186,8 +1192,10 @@ int main(int argc, char** argv)
 			double t = ll_get_time_ms() - t_start;
 			struct rusage r_end;
 			getrusage(RUSAGE_SELF, &r_end);
+#if defined(__linux__)
 			struct io_stat io_end;
 			getiostat(&io_end);
+#endif
 
 			runtimes.push_back(t);
 			cpu_times.push_back(ll_timeval_to_ms(r_end.ru_utime)
@@ -1204,6 +1212,7 @@ int main(int argc, char** argv)
 			in_blocks.push_back(r_end.ru_inblock - r_start.ru_inblock);
 			out_blocks.push_back(r_end.ru_oublock - r_start.ru_oublock);
 
+#if defined(__linux__)
 			io_rchar.push_back(io_end.io_rchar - io_start.io_rchar);
 			io_wchar.push_back(io_end.io_wchar - io_start.io_wchar);
 			io_syscr.push_back(io_end.io_syscr - io_start.io_syscr);
@@ -1215,6 +1224,7 @@ int main(int argc, char** argv)
 			io_cancelled_write_bytes.push_back(
 					io_end.io_cancelled_write_bytes
 					- io_start.io_cancelled_write_bytes);
+#endif
 
 			double r_d_adj = benchmark->finalize();
 			if (!std::isnan(r_d_adj)) return_d = r_d_adj;
@@ -1342,12 +1352,14 @@ int main(int argc, char** argv)
 			fprintf(stdout, "Mjr Faults : %ld\n", ll_sum(major_faults));
 			fprintf(stdout, "In Blocks  : %ld\n", ll_sum(in_blocks));
 			fprintf(stdout, "Out Blocks : %ld\n", ll_sum(out_blocks));
+#if defined(__linux__)
 			fprintf(stdout, "In Bytes   : %ld (%0.2lf GB)\n",
 					ll_sum(io_read_bytes),
 					ll_sum(io_read_bytes) / (1024.0*1024.0*1024.0));
 			fprintf(stdout, "Out Bytes  : %ld (%0.2lf GB)\n",
 					ll_sum(io_write_bytes),
 					ll_sum(io_write_bytes) / (1024.0*1024.0*1024.0));
+#endif
 		}
 		else {
 			double x = 0;
@@ -1388,6 +1400,7 @@ int main(int argc, char** argv)
 					ll_mean(in_blocks), ll_c95(in_blocks));
 			fprintf(stdout, "Out Blocks : %0.2lf +- %0.2lf\n",
 					ll_mean(out_blocks), ll_c95(out_blocks));
+#if defined(__linux__)
 			fprintf(stdout, "In Bytes   : %0.2lf +- %0.2lf "
 					"(%0.2lf +- %0.2lf GB)\n",
 					ll_mean(io_read_bytes),
@@ -1400,6 +1413,7 @@ int main(int argc, char** argv)
 					ll_c95(io_write_bytes),
 					ll_mean(io_write_bytes) / (1024.0*1024.0*1024.0),
 					ll_c95(io_write_bytes) / (1024.0*1024.0*1024.0));
+#endif
 		}
 	}
 	printf("\n");
