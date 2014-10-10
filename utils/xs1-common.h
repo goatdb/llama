@@ -40,6 +40,19 @@
 #include <cstdio>
 #include <cstdlib>
 
+
+/*
+ * Debug output
+ */
+
+#ifdef _DEBUG
+#define LL_D_PRINT(format, ...) { \
+	fprintf(stderr, "[DEBUG] %s" format, __FUNCTION__, ## __VA_ARGS__); }
+#else
+#define LL_D_PRINT(format, ...)
+#endif
+
+
 /*
  * Error handling
  */

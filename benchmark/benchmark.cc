@@ -946,9 +946,9 @@ int main(int argc, char** argv)
 	if (print_node_from <= print_node_to
 			&& print_node_from != LL_NIL_NODE) {
 		printf("\n");
-		printf("Number of nodes : %lu\n", G.max_nodes());
-		//printf("Number of edges : %lu\n", G.max_edges());
-		printf("Number of levels: %lu\n", G.num_levels());
+		printf("Number of nodes : %lu\n", (size_t) G.max_nodes());
+		//printf("Number of edges : %lu\n", (size_t) G.max_edges());
+		printf("Number of levels: %lu\n", (size_t) G.num_levels());
 		printf("\n");
 		printf("A part of the graph:\n");
 		for (node_t n = print_node_from; n <= print_node_to; n++) {
@@ -1306,9 +1306,9 @@ int main(int argc, char** argv)
 #endif
 		  );
 	printf("Type       : %s\n\n", configuration_summary.c_str());
-	printf("# Nodes    : %lu\n", graph.max_nodes());
-	//printf("# Edges    : %lu\n\n", graph.max_edges());
-	printf("# Levels   : %lu\n", G.num_levels());
+	printf("# Nodes    : %lu\n", (size_t) graph.max_nodes());
+	//printf("# Edges    : %lu\n\n", (size_t) graph.max_edges());
+	printf("# Levels   : %lu\n", (size_t) G.num_levels());
 
 	printf("Memory     : %0.2lf MB\n", (maxrss_loaded - maxrss_start) / 1024.0);
 	//printf("Out Edges  : %0.2lf MB\n", mem_out_edges / 1024.0 / 1024.0);

@@ -53,6 +53,30 @@
 #include "llama/loaders/ll_load_async_writable.h"
 #include "llama/loaders/ll_load_utils.h"
 
+#if defined(__APPLE__)
+#include <arpa/inet.h>
+#define be32toh		ntohl
+#define be16toh		ntohs
+
+inline uint64_t be64toh(uint64_t h) {
+
+	uint64_t x;
+	uint8_t* d = (uint8_t*) &x;
+	uint8_t* s = (uint8_t*) &h;
+
+	d[0] = s[7];
+	d[1] = s[6];
+	d[2] = s[5];
+	d[3] = s[4];
+	d[4] = s[3];
+	d[5] = s[2];
+	d[6] = s[1];
+	d[7] = s[0];
+
+	return x;
+}
+#endif
+
 // XXX Broken - needs a STINGER-like node map
 //#define LOAD_NODES_ASYNC
 

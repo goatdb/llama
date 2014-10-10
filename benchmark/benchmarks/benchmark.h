@@ -243,7 +243,7 @@ void print_results_part(FILE* f, Graph& graph, int* a, int max=50) {
 	node_t m = std::min<node_t>(max, graph.max_nodes());
 
 	for (node_t n = 0; n < m; n++) {
-		if (n % 10 == 0) fprintf(f, "%7ld:", n);
+		if (n % 10 == 0) fprintf(f, "%7lld:", n);
 		fprintf(f, " %7d", a[n]);
 		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
 	}
@@ -266,8 +266,31 @@ void print_results_part(FILE* f, Graph& graph, long* a, int max=50) {
 	node_t m = std::min<node_t>(max, graph.max_nodes());
 
 	for (node_t n = 0; n < m; n++) {
-		if (n % 10 == 0) fprintf(f, "%7ld:", n);
+		if (n % 10 == 0) fprintf(f, "%7lld:", n);
 		fprintf(f, " %7ld", a[n]);
+		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
+	}
+
+	fprintf(f, "\n");
+}
+
+
+/**
+ * Print part of the results
+ *
+ * @param f the output file
+ * @param graph the graph
+ * @param a the array of results
+ * @param max the max number of results to print
+ */
+template <class Graph>
+void print_results_part(FILE* f, Graph& graph, long long* a, int max=50) {
+
+	node_t m = std::min<node_t>(max, graph.max_nodes());
+
+	for (node_t n = 0; n < m; n++) {
+		if (n % 10 == 0) fprintf(f, "%7lld:", n);
+		fprintf(f, " %7lld", a[n]);
 		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
 	}
 
@@ -289,7 +312,7 @@ void print_results_part(FILE* f, Graph& graph, float* a, int max=50) {
 	node_t m = std::min<node_t>(max, graph.max_nodes());
 
 	for (node_t n = 0; n < m; n++) {
-		if (n % 10 == 0) fprintf(f, "%7ld:", n);
+		if (n % 10 == 0) fprintf(f, "%7lld:", n);
 		fprintf(f, " %0.10f", a[n]);
 		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
 	}
@@ -312,7 +335,7 @@ void print_results_part(FILE* f, Graph& graph, double* a, int max=50) {
 	node_t m = std::min<node_t>(max, graph.max_nodes());
 
 	for (node_t n = 0; n < m; n++) {
-		if (n % 10 == 0) fprintf(f, "%7ld:", n);
+		if (n % 10 == 0) fprintf(f, "%7lld:", n);
 		fprintf(f, " %0.10lf", a[n]);
 		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
 	}

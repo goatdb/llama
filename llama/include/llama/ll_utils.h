@@ -493,6 +493,11 @@ static inline bool _ll_atomic_compare_and_swap(long *dest, long old_val,
     return __sync_bool_compare_and_swap(dest, old_val, new_val);
 }
 
+static inline bool _ll_atomic_compare_and_swap(long long* dest, long long old_val,
+		long long new_val) {
+    return __sync_bool_compare_and_swap(dest, old_val, new_val);
+}
+
 static inline bool _ll_atomic_compare_and_swap(float *dest, float old_val,
 		float new_val) {
     return _ll_cas_asm(dest, old_val, new_val);

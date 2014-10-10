@@ -538,7 +538,6 @@ public:
 
 		for (size_t i = 0; i < _mmaped_regions.size(); i++) {
 			if (_mmaped_regions[i].mr_address == NULL) continue;
-			munmap(_mmaped_regions[i].mr_address, _mmaped_regions[i].mr_length);
 		}
 
 		for (size_t i = 0; i < _fds.size(); i++) {
@@ -965,6 +964,16 @@ public:
 		else if (s < mr.mr_length) {
 #if defined(__linux__)
 			void* m = mremap(mr.mr_address, mr.mr_length, s, 0);
+#elif defined(__APPLE__)
+			munmap(mr.mr_address, mr.mr_length);
+			void* m = mmap(mr.mr_address, mr.mr_length,
+					PROT_READ | (mr.mr_writable ? PROT_WRITE : 0),
+					MAP_SHARED | MAP_FIXED, file_for_index(mr.mr_file_index),
+					mr.mr_offset);
+			if (m == MAP_FAILED) {
+				perror("mmap/mremap");
+				abort();
+			}
 #else
 			void* m = mremap(mr.mr_address, mr.mr_length,
 							mr.mr_address, s, MAP_FIXED);

@@ -93,14 +93,14 @@ public:
 
 		fprintf(_out, "Out-edges\n");
 		for (size_t n = 0; n < max_nodes; n++) {
-			fprintf(_out, "%5ld:", n);
+			fprintf(_out, "%5lu:", n);
 
 			ll_edge_iterator iter;
 			G.out_iter_begin(iter, n);
 			for (edge_t v_idx = G.out_iter_next(iter);
 					v_idx != LL_NIL_EDGE;
 					v_idx = G.out_iter_next(iter)) {
-				fprintf(_out, "\t%ld", iter.last_node);
+				fprintf(_out, "\t%lld", iter.last_node);
 			}
 			fprintf(_out, "\n");
 		}
@@ -108,14 +108,14 @@ public:
 		if (reverse) {
 			fprintf(_out, "\nIn-edges\n");
 			for (size_t n = 0; n < max_nodes; n++) {
-				fprintf(_out, "%5ld:", n);
+				fprintf(_out, "%5lu:", n);
 
 				ll_edge_iterator iter;
 				G.inm_iter_begin(iter, n);
 				for (node_t v = G.inm_iter_next(iter);
 						v != LL_NIL_NODE;
 						v = G.inm_iter_next(iter)) {
-					fprintf(_out, "\t%ld", v);
+					fprintf(_out, "\t%lld", v);
 				}
 				fprintf(_out, "\n");
 			}

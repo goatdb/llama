@@ -41,7 +41,9 @@
 #	include <sys/sysinfo.h>
 #elif defined(__NetBSD__)
 #	include <sys/param.h>
-#	include <sys/sysctl.h>
+#  	include <sys/sysctl.h>
+#elif defined(__APPLE__)
+#	include <mach/mach.h>
 #else
 #endif
 
@@ -55,6 +57,7 @@
 #include <iterator>
 #include <unistd.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -197,9 +200,37 @@ public:
 			}
 
 			size_t max = u.pagesize * (u.free + u.filepages);
+
+#elif defined(__APPLE__)
+
+			struct vm_statistics64 s;
+			mach_port_t host = mach_host_self();
+			natural_t count = HOST_VM_INFO64_COUNT;
+
+			if (host_statistics64(host, HOST_VM_INFO64, (host_info64_t) &s,
+						&count) != KERN_SUCCESS) {
+				LL_E_PRINT("Cannot determine the amount of free memory\n");
+				abort();
+			}
+
+			size_t max = getpagesize()
+				* ((size_t) s.free_count + s.inactive_count);
 #else
-#error "Don't know how to determine the amount of free memory on this platform"
+#warning "Don't know how to autodetect memory info on this platform"
+#warning "(Falling back to a weird C++ trick that probably will not work.)"
+
+			std::pair<char*, std::ptrdiff_t> tmp
+				= std::get_temporary_buffer<char>(33ull * 1048576ull * 1048576ull);
+			size_t max = tmp.second;
+			std::return_temporary_buffer(tmp.first);
+
+			if (max == 33ull * 1048576ull * 1048576ull) {
+				LL_E_PRINT("Autodetecting the amount of free memory failed\n");
+				LL_W_PRINT("(If you really have > 32 TB RAM, fix this check.)\n");
+				abort();
+			}
 #endif
+			//LL_D_PRINT("Detected free memory: %0.2lf MB\n", max/1048576.0);
 
 			if (max < 1048576ul) {
 				LL_E_PRINT("Not enough memory: %0.2lf KB\n", max/1024.0);
