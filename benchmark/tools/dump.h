@@ -100,7 +100,7 @@ public:
 			for (edge_t v_idx = G.out_iter_next(iter);
 					v_idx != LL_NIL_EDGE;
 					v_idx = G.out_iter_next(iter)) {
-				fprintf(_out, "\t%lld", iter.last_node);
+				fprintf(_out, "\t%lld", (long long) iter.last_node);
 			}
 			fprintf(_out, "\n");
 		}
@@ -115,7 +115,7 @@ public:
 				for (node_t v = G.inm_iter_next(iter);
 						v != LL_NIL_NODE;
 						v = G.inm_iter_next(iter)) {
-					fprintf(_out, "\t%lld", v);
+					fprintf(_out, "\t%lld", (long long) v);
 				}
 				fprintf(_out, "\n");
 			}

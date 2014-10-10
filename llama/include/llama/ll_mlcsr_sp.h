@@ -1908,11 +1908,11 @@ public:
 		for (node_t n = 0; n < (node_t) max_nodes; n++) {
 			auto& b = (*this->_begin[level])[n];
 			if (b.adj_list_start == LL_NIL_EDGE) {
-				fprintf(file, "[%4lld] NIL\n", n);
+				fprintf(file, "[%4lld] NIL\n", (long long) n);
 				continue;
 			}
 			if (b.level_length == 0) {
-				fprintf(file, "[%4lld] NIL [len=0]\n", n);
+				fprintf(file, "[%4lld] NIL [len=0]\n", (long long) n);
 				continue;
 			}
 
@@ -1931,7 +1931,8 @@ public:
 				fprintf(file, "\n");
 			}
 
-			fprintf(file, "[%4lld] start=%d:%ld len=%ld:", n, bl, bi, blen);
+			fprintf(file, "[%4lld] start=%d:%ld len=%ld:",
+					(long long) n, bl, bi, blen);
 			if (bl == level && blen > 0) {
 				for (size_t i = 0; i < blen; i++) {
 					fprintf(file, " %4ld",

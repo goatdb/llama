@@ -99,7 +99,8 @@ node_t cross_validate_exp_out(EXP_GRAPH& G_org, EXP_GRAPH2& G_exp) {
 		for (size_t i = 0; i < v_org.size(); i++) {
 			if (v_org[i] != v_exp[i]) {
 				for (size_t j = 0; j < v_org.size(); j++) {
-					printf("%8lld %8lld", v_org[j], v_exp[j]);
+					printf("%8lld %8lld", (long long) v_org[j],
+							(long long) v_exp[j]);
 					if (v_org[j] != v_exp[j]) printf(" *");
 					printf("\n");
 				}
@@ -423,7 +424,7 @@ int cross_validate_with_file(Graph& graph, const char* cross_validate_with,
             {
                 auto p = cv_graph.ro_graph().get_all_node_properties_64();
                 for (auto it = p.begin(); it != p.end(); it++)
-                    printf(" %llx", it->second->get(n));
+                    printf(" %llx", (long long) it->second->get(n));
             }
             printf("\n");
             printf("%15s:", "Experimental");
@@ -435,7 +436,7 @@ int cross_validate_with_file(Graph& graph, const char* cross_validate_with,
             {
                 auto p = graph.ro_graph().get_all_node_properties_64();
                 for (auto it = p.begin(); it != p.end(); it++)
-                    printf(" %llx", it->second->get(n));
+                    printf(" %llx", (long long) it->second->get(n));
             }
             printf("\n");
             return 1;
