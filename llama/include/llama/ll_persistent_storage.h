@@ -538,6 +538,7 @@ public:
 
 		for (size_t i = 0; i < _mmaped_regions.size(); i++) {
 			if (_mmaped_regions[i].mr_address == NULL) continue;
+			munmap(_mmaped_regions[i].mr_address, _mmaped_regions[i].mr_length);
 		}
 
 		for (size_t i = 0; i < _fds.size(); i++) {
