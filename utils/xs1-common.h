@@ -89,4 +89,35 @@ bool next(FILE* f, xs1* out) {
 	return r > 0;
 }
 
+
+/**
+ * Write the ini file
+ *
+ * @param dat_name the original (.dat) file name
+ * @param num_nodes the number of nodes
+ * @param num_edges the number of edges
+ * @return true if okay, false if not
+ */
+bool write_ini(const char* dat_name, size_t num_nodes, size_t num_edges) {
+
+	std::string s_out = dat_name; s_out += ".ini";
+	FILE* f_out = fopen(s_out.c_str(), "w");
+	if (f_out == NULL) return false;
+
+	char* name = (char*) alloca(strlen(dat_name) + 1);
+	memcpy(name, dat_name, strlen(dat_name) + 1);
+	name = basename(name);
+
+	fprintf(f_out, "[graph]\n");
+	fprintf(f_out, "type=1\n");
+	fprintf(f_out, "name=%s\n", name);
+	fprintf(f_out, "vertices=%lu\n", num_nodes);
+	fprintf(f_out, "edges=%lu\n", num_edges);
+
+	fclose(f_out);
+
+	return true;
+}
+
+
 #endif

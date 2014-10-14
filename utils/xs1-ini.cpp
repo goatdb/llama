@@ -132,23 +132,10 @@ int main(int argc, char** argv) {
 
 	fclose(f_in);
 
-	FILE* f_out = fopen(s_out.c_str(), "w");
-	if (f_out == NULL) {
-		perror("fopen");
+	if (!write_ini(s_in.c_str(), num_nodes, num_edges)) {
+		perror("write_ini");
 		return 1;
 	}
-
-	char* name = (char*) alloca(strlen(s_in.c_str()) + 1);
-	memcpy(name, s_in.c_str(), strlen(s_in.c_str()) + 1);
-	name = basename(name);
-
-	fprintf(f_out, "[graph]\n");
-	fprintf(f_out, "type=1\n");
-	fprintf(f_out, "name=%s\n", name);
-	fprintf(f_out, "vertices=%lu\n", num_nodes);
-	fprintf(f_out, "edges=%lu\n", num_edges);
-
-	fclose(f_out);
 
 	return 0;
 }
