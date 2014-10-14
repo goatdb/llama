@@ -1168,6 +1168,7 @@ private:
 
 		graph->partial_init_level(max_nodes, max_nodes, max_edges);
 		LL_ET<node_t>* et = graph->out().edge_table(new_level);
+		LL_D_PRINT("Nodes = %lu, edges = %lu\n", max_nodes, max_edges);
 
 		ll_mlcsr_edge_property<WeightType>* prop_weight = NULL;
 		if (load_weight) prop_weight = init_prop_weight(graph);

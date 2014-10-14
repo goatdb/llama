@@ -44,6 +44,7 @@
 #include "llama/loaders/ll_load_xstream1.h"
 
 #include "llama/loaders/ll_gen_erdosrenyi.h"
+#include "llama/loaders/ll_gen_rmat.h"
 
 
 /**
@@ -66,6 +67,7 @@ public:
 		_loaders.push_back(new ll_loader_xs1());
 
 		_loaders.push_back(new ll_generator_erdos_renyi());
+		_loaders.push_back(new ll_generator_rmat());
 	}
 
 

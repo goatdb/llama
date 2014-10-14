@@ -1,5 +1,5 @@
 /*
- * ll_gen_erdosrenyi.h
+ * ll_gen_rmat.h
  * LLAMA Graph Analytics
  *
  * Copyright 2014
@@ -34,9 +34,10 @@
  */
 
 
-#ifndef LL_GEN_ERDOSRENYI_H_
-#define LL_GEN_ERDOSRENYI_H_
+#ifndef LL_GEN_RMAT_H_
+#define LL_GEN_RMAT_H_
 
+#include <cmath>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -49,22 +50,22 @@
 
 
 /**
- * Erdos-Renyi graph generator
+ * R-MAT graph generator
  */
-class ll_generator_erdos_renyi : public ll_file_loader {
+class ll_generator_rmat : public ll_file_loader {
 
 public:
 
 	/**
-	 * Create a new instance of ll_generator_erdos_renyi
+	 * Create a new instance of ll_generator_rmat
 	 */
-	ll_generator_erdos_renyi() {}
+	ll_generator_rmat() {}
 
 
 	/**
 	 * Destroy the instance
 	 */
-	virtual ~ll_generator_erdos_renyi() {}
+	virtual ~ll_generator_rmat() {}
 
 
 	/**
@@ -78,8 +79,8 @@ public:
 		if (*file == '\0') return false;
 		if (file[strlen(file)-1] != ')') return false;
 
-		return strncasecmp(file, "erdosrenyi(", 11) == 0
-			|| strncasecmp(file, "er(", 3) == 0;
+		return strncasecmp(file, "r-mat(", 6) == 0
+			|| strncasecmp(file, "rmat(", 5) == 0;
 	}
 
 
@@ -94,7 +95,7 @@ public:
 	virtual void load_direct(ll_mlcsr_ro_graph* graph, const char* file,
 			const ll_loader_config* config) {
 
-		er_generator loader(file);
+		rmat_generator loader(file);
 		bool r = loader.load_direct(graph, config);
 		if (!r) abort();
 	}
@@ -110,7 +111,7 @@ public:
 	virtual void load_incremental(ll_writable_graph* graph, const char* file,
 			const ll_loader_config* config) {
 
-		er_generator loader(file);
+		rmat_generator loader(file);
 		bool r = loader.load_incremental(graph, config);
 		if (!r) abort();
 	}
@@ -123,7 +124,7 @@ public:
 	 * @return the data source
 	 */
 	virtual ll_data_source* create_data_source(const char* file) {
-		return new er_generator(file);
+		return new rmat_generator(file);
 	}
 
 
@@ -132,14 +133,20 @@ private:
 	/**
 	 * The generator (no weights for now)
 	 */
-	class er_generator : public ll_edge_list_loader<unsigned, false>
+	class rmat_generator : public ll_edge_list_loader<unsigned, false>
 	{	
 
 		std::string _command_string;
-
 		std::string _command;
+
 		size_t _nodes;
 		size_t _edges;
+
+		size_t _scale;
+		double _degree;
+		double _a, _b, _c, _d;
+		bool _noise;
+
 		unsigned _seed;
 
 		size_t _generated_edges;
@@ -149,17 +156,17 @@ private:
 	public:
 
 		/**
-		 * Create an instance of class er_generator
+		 * Create an instance of class rmat_generator
 		 *
 		 * @param file_name the file name
 		 */
-		er_generator(const char* file_name)
+		rmat_generator(const char* file_name)
 			: ll_edge_list_loader<unsigned, false>() {
 
 			_command_string = file_name;
 
 
-			// Parse the string: ER(nodes, edges [, seed])
+			// Parse the string: RMAT(scale, degree [, a, b, c [, seed]])
 
 			std::vector<std::string> args;
 
@@ -188,18 +195,54 @@ private:
 
 			// Arguments
 
-			if (args.size() != 2 && args.size() != 3) {
-				LL_E_PRINT("Invalid syntax, expected: ER(nodes, edges [, seed])\n");
+			if (args.size() != 2 && args.size() != 5 && args.size() != 6) {
+				LL_E_PRINT("Invalid syntax, expected: "
+						"RMAT(scale, degree [, a, b, c [, seed]])\n");
 				abort();
 			}
 
-			_nodes = atol(args[0].c_str());
-			_edges = atol(args[1].c_str());
+			_scale = atol(args[0].c_str());
+			_degree = atof(args[1].c_str());
+
+			if (args.size() > 2) {
+				_a = atof(args[2].c_str());
+				_b = atof(args[3].c_str());
+				_c = atof(args[4].c_str());
+			}
+			else {
+				_a = 0.57;
+				_b = 0.19;
+				_c = 0.19;
+			}
 			
-			if (args.size() > 2)
-				_seed = atol(args[2].c_str());
+			if (args.size() > 5)
+				_seed = atol(args[5].c_str());
 			else
 				_seed = time(NULL);
+
+			if (_scale <= 0 || _scale > 31) {
+				LL_E_PRINT("Invalid scale\n");
+				abort();
+			}
+
+			if (_degree <= 0) {
+				LL_E_PRINT("Invalid degree\n");
+				abort();
+			}
+
+			_d = 1.0 - (_a + _b + _c);
+
+			if (_a < 0 || _b < 0 || _c < 0 || _a + _b + _c > 1) {
+				LL_E_PRINT("Invalid R-MAT probabilities\n");
+				abort();
+			}
+
+			_noise = true;
+
+			_nodes = powl(2, _scale);
+			_edges = (size_t) (0.1 + round(_degree * _nodes));
+
+			LL_D_PRINT("Nodes = %lu, edges = %lu\n", _nodes, _edges);
 
 
 			// Initialize the generator
@@ -211,7 +254,7 @@ private:
 		/**
 		 * Destroy the loader
 		 */
-		virtual ~er_generator() {
+		virtual ~rmat_generator() {
 		}
 
 
@@ -230,8 +273,55 @@ private:
 
 			if (_generated_edges >= _edges) return false;
 
-			*o_tail = ll_rand64_positive_r(&_state) % _nodes;
-			*o_head = ll_rand64_positive_r(&_state) % _nodes;
+			double a = _a;
+			double b = _b;
+			double c = _c;
+			double d = _d;
+
+			size_t h = 0;
+			size_t t = 0;
+			size_t bit = 1ul << (_scale - 1);
+
+			while (bit != 0) {
+
+				double r = rand_r(&_state) / (double) RAND_MAX;
+				if (r < a) {
+				}
+				else if (r < a + b) {
+					h |= bit;
+				}
+				else if (r < a + b + c) {
+					t |= bit;
+				}
+				else {
+					t |= bit;
+					h |= bit;
+				}
+
+				bit >>= 1;
+
+				if (_noise) {
+
+					a *= 0.95 + 0.1 * (rand_r(&_state) / (double) RAND_MAX);
+					b *= 0.95 + 0.1 * (rand_r(&_state) / (double) RAND_MAX);
+					c *= 0.95 + 0.1 * (rand_r(&_state) / (double) RAND_MAX);
+					d *= 0.95 + 0.1 * (rand_r(&_state) / (double) RAND_MAX);
+
+					double n = 1.0 / (a + b + c + d);
+					a *= n;
+					b *= n;
+					c *= n;
+					d = 1.0 - (a + b + c);
+				}
+			}
+
+			assert((size_t) h < _nodes);
+			assert((size_t) t < _nodes);
+
+			*o_tail = h;
+			*o_head = t;
+
+			LL_D_NODE2_PRINT(t, h, "%lu --> %lu\n", t, h);
 
 			_generated_edges++;
 			return true;
