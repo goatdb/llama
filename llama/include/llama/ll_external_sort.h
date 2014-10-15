@@ -42,6 +42,7 @@
 #elif defined(__NetBSD__)
 #	include <sys/param.h>
 #  	include <sys/sysctl.h>
+#	include <uvm/uvm_extern.h>
 #elif defined(__APPLE__)
 #	include <mach/mach.h>
 #else
