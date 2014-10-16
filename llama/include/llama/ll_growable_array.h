@@ -234,7 +234,7 @@ public:
 	 * @return the block pointer
 	 */
 	inline T const * block(size_t b) const {
-		assert(b <= (_size >> _block_size2) && b <= _blocks);
+		assert(b <= (size_t) (_size >> _block_size2) && b <= (size_t) _blocks);
 		return _arrays[b];
 	}
 
@@ -246,8 +246,8 @@ public:
 	 * @return the number of elements in the block
 	 */
 	inline size_t block_size(size_t b) const {
-		assert(b <= (_size >> _block_size2) && b <= _blocks);
-		return b < (_size >> _block_size2)
+		assert(b <= (size_t) (_size >> _block_size2) && b <= (size_t) _blocks);
+		return b < (size_t) (_size >> _block_size2)
 			? 1 << _block_size2
 			: (_size & ((1 << _block_size2) - 1));
 	}

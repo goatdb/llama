@@ -67,34 +67,16 @@ public:
 	/**
 	 * Create the benchmark
 	 *
-	 * @param graph the graph
 	 * @param root the root
 	 * @param weightName the weight property name
 	 */
-	ll_b_sssp_weighted(Graph& graph, node_t root, const char* weightName)
-		: ll_benchmark<Graph>(graph, "SSSP - Weighted") {
+	ll_b_sssp_weighted(node_t root, const char* weightName)
+		: ll_benchmark<Graph>("SSSP - Weighted") {
 
 		this->root = root;
 
-		size_t max_nodes = graph.max_nodes() + 1024;
-		G_dist = (WeightType*) malloc(sizeof(WeightType) * max_nodes);
-
-		if (sizeof(WeightType) == 4) {
-			G_weight = reinterpret_cast<ll_mlcsr_edge_property<WeightType>*>(
-					graph.get_edge_property_32(weightName));
-		}
-		else if (sizeof(WeightType) == 8) {
-			G_weight = reinterpret_cast<ll_mlcsr_edge_property<WeightType>*>(
-					graph.get_edge_property_64(weightName));
-		}
-		else {
-			abort();
-		}
-		if (G_weight == NULL) {
-			fprintf(stderr, "Error: The graph does not have edge property "
-					"\"%s\".\n", weightName);
-			abort();
-		}
+		this->create_auto_array_for_nodes(G_dist);
+		this->create_auto_property(G_weight, weightName);
 	}
 
 
@@ -102,7 +84,6 @@ public:
 	 * Destroy the benchmark
 	 */
 	virtual ~ll_b_sssp_weighted(void) {
-		free(G_dist);
 	}
 
 
@@ -115,7 +96,7 @@ public:
 
 		assert(sizeof(WeightType) >= 4);
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		ll_mlcsr_edge_property<WeightType>& G_len = *G_weight;
 		ll_spinlock_table lt;
 		ll_memory_helper m;
@@ -207,7 +188,7 @@ public:
 	 */
 	virtual double finalize(void) {
 		WeightType max = 0;
-		for (node_t n = 0; n < this->_graph.max_nodes(); n++) {
+		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
 			if (G_dist[n] > max) max = G_dist[n];
 		}
 		return max;
@@ -269,16 +250,13 @@ public:
 	/**
 	 * Create the benchmark
 	 *
-	 * @param graph the graph
 	 * @param root the root
 	 */
-	ll_b_sssp_unweighted_bfs(Graph& graph, node_t root)
-		: ll_benchmark<Graph>(graph, "SSSP - Unweighted, BFS") {
+	ll_b_sssp_unweighted_bfs(node_t root)
+		: ll_benchmark<Graph>("SSSP - Unweighted, BFS") {
 
 		this->root = root;
-
-		size_t max_nodes = graph.max_nodes() + 1024;
-		G_dist = (int32_t*) malloc(sizeof(int32_t) * max_nodes);
+		this->create_auto_array_for_nodes(G_dist);
 	}
 
 
@@ -286,7 +264,6 @@ public:
 	 * Destroy the benchmark
 	 */
 	virtual ~ll_b_sssp_unweighted_bfs(void) {
-		free(G_dist);
 	}
 
 
@@ -297,7 +274,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 
 #pragma omp parallel for
 		for (node_t t0 = 0; t0 < G.max_nodes(); t0++) {
@@ -320,7 +297,7 @@ public:
 	 */
 	virtual double finalize(void) {
 		int32_t max  = 0;
-		for (node_t n = 0; n < this->_graph.max_nodes(); n++) {
+		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
 			if (G_dist[n] > max) max = G_dist[n];
 		}
 		return max;
@@ -354,16 +331,13 @@ public:
 	/**
 	 * Create the benchmark
 	 *
-	 * @param graph the graph
 	 * @param root the root
 	 */
-	ll_b_sssp_unweighted_iter(Graph& graph, node_t root)
-		: ll_benchmark<Graph>(graph, "SSSP - Unweighted, iterative") {
+	ll_b_sssp_unweighted_iter(node_t root)
+		: ll_benchmark<Graph>("SSSP - Unweighted, iterative") {
 
 		this->root = root;
-
-		size_t max_nodes = graph.max_nodes() + 1024;
-		G_dist = (int32_t*) malloc(sizeof(int32_t) * max_nodes);
+		this->create_auto_array_for_nodes(G_dist);
 	}
 
 
@@ -371,7 +345,6 @@ public:
 	 * Destroy the benchmark
 	 */
 	virtual ~ll_b_sssp_unweighted_iter(void) {
-		free(G_dist);
 	}
 
 
@@ -382,7 +355,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		ll_spinlock_table lt;
 		ll_memory_helper m;
 
@@ -465,7 +438,7 @@ public:
 	 */
 	virtual double finalize(void) {
 		int32_t max  = 0;
-		for (node_t n = 0; n < this->_graph.max_nodes(); n++) {
+		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
 			if (G_dist[n] > max) max = G_dist[n];
 		}
 		return max;

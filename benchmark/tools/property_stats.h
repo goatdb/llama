@@ -72,25 +72,10 @@ public:
 	 * @param graph the graph
 	 * @param name the weight property name
 	 */
-	ll_t_edge_property_stats(Graph& graph, const char* name)
-		: ll_benchmark<Graph>(graph, "Edge Property Stats") {
+	ll_t_edge_property_stats(const char* name)
+		: ll_benchmark<Graph>("Edge Property Stats") {
 
-		if (sizeof(value_t) == 4) {
-			_p = reinterpret_cast<ll_mlcsr_edge_property<value_t>*>(
-					graph.get_edge_property_32(name));
-		}
-		else if (sizeof(value_t) == 8) {
-			_p = reinterpret_cast<ll_mlcsr_edge_property<value_t>*>(
-					graph.get_edge_property_64(name));
-		}
-		else {
-			abort();
-		}
-		if (_p == NULL) {
-			fprintf(stderr, "Error: The graph does not have edge property "
-					"\"%s\".\n", name);
-			abort();
-		}
+		this->create_auto_property(_p, name);
 	}
 
 
@@ -110,7 +95,7 @@ public:
 
 		assert(sizeof(value_t) >= 4);
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		ll_mlcsr_edge_property<value_t>& p = *_p;
 
         _min = 0;

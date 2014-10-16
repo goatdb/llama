@@ -130,13 +130,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_bc_adj(Graph& graph) : ll_benchmark<Graph>(graph, "Betweenness Centrality - Exact") {
-
-		size_t max_nodes = 20 * 1000 * 1000;
-		G_BC = (float*) malloc(sizeof(float) * max_nodes);
+	ll_b_bc_adj() : ll_benchmark<Graph>("Betweenness Centrality - Exact") {
+		this->create_auto_array_for_nodes(G_BC);
 	}
 
 
@@ -144,7 +140,6 @@ public:
 	 * Destroy the benchmark
 	 */
 	virtual ~ll_b_bc_adj(void) {
-		free(G_BC);
 	}
 
 
@@ -155,7 +150,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		ll_memory_helper m;
 
 		float* G_sigma = m.allocate<float>(G.max_nodes());
@@ -193,7 +188,7 @@ public:
 	virtual double finalize(void) {
 		float max  = 0;
 
-		for (node_t n = 0; n < this->_graph.max_nodes(); n++) {
+		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
 			if (G_BC[n] > max) max = G_BC[n];
 		}
 

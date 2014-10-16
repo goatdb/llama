@@ -128,13 +128,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_tarjan_scc(Graph& graph) : ll_benchmark<Graph>(graph,
-			"Tarjan's SCC") {
-		size_t max_nodes = graph.max_nodes() + 1024;
-		G_SCC = (node_t*) malloc(sizeof(node_t) * max_nodes);
+	ll_b_tarjan_scc() : ll_benchmark<Graph>("Tarjan's SCC") {
+		this->create_auto_array_for_nodes(G_SCC);
 	}
 
 
@@ -142,7 +138,6 @@ public:
 	 * Destroy the benchmark
 	 */
 	virtual ~ll_b_tarjan_scc(void) {
-		free(G_SCC);
 	}
 
 
@@ -154,7 +149,7 @@ public:
 	virtual double run(void) {
 
 		//Initializations
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		ll_memory_helper m;
 
 		ll_node_seq_vec Stack(omp_get_max_threads());
@@ -192,7 +187,7 @@ public:
 	virtual double finalize(void) {
 		node_t max  = 0;
 
-		for (node_t n = 0; n < this->_graph.max_nodes(); n++) {
+		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
 			if (G_SCC[n] > max) max = G_SCC[n];
 		}
 

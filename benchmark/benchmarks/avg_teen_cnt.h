@@ -65,22 +65,14 @@ public:
 	/**
 	 * Create the benchmark
 	 *
-	 * @param graph the graph
 	 * @param k the age threshold
 	 */
-	ll_b_avg_teen_cnt(Graph& graph, int k) : ll_benchmark<Graph>(graph, "Average Teen Count") {
+	ll_b_avg_teen_cnt(int k) : ll_benchmark<Graph>("Average Teen Count") {
 
 		K = k;
 
-		size_t max_nodes = 20 * 1000 * 1000;
-		G_teen_cnt = (int32_t*) malloc(sizeof(int32_t) * max_nodes);
-
-		G_age = reinterpret_cast<ll_mlcsr_node_property<int32_t>*>(
-					this->_graph.get_node_property_32("age"));
-		if (G_age == NULL) {
-			fprintf(stderr, "Error: The graph does not have node property \"age\".\n");
-			abort();
-		}
+		this->create_auto_array_for_nodes(G_teen_cnt);
+		this->create_auto_property(G_age, "age");
 	}
 
 
@@ -88,7 +80,6 @@ public:
 	 * Destroy the benchmark
 	 */
 	virtual ~ll_b_avg_teen_cnt(void) {
-		free(G_teen_cnt);
 	}
 
 
@@ -99,7 +90,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 
 		float avg = 0.0 ;
 		double _avg4 = 0.0 ;

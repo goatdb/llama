@@ -64,11 +64,9 @@ public:
 
 	/**
 	 * Create the tool
-	 *
-	 * @param graph the graph
 	 */
-	ll_t_degree_distribution(Graph& graph)
-		: ll_benchmark<Graph>(graph, "[Tool] Degree Distribution") {
+	ll_t_degree_distribution()
+		: ll_benchmark<Graph>("[Tool] Degree Distribution") {
 		max_edges = 0;
 	}
 
@@ -86,7 +84,7 @@ public:
 	 * @return the numerical result, if applicable
 	 */
 	virtual double run(void) {
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 
 		for (node_t n = 0; n < G.max_nodes(); n++) {
 			size_t d = G.out_degree(n);
@@ -111,7 +109,7 @@ public:
 	 * Print the results
 	 */
 	virtual void print_results(void) {
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		size_t n = G.max_nodes();
 		size_t m = max_edges;
 

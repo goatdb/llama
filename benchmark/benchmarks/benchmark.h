@@ -39,6 +39,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <vector>
+
 #include <unistd.h>
 
 #define LL_B_PROGRESS_LENGTH		40
@@ -47,6 +49,76 @@
 #define LL_B_PROGRESS_B_Q			"\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
 #define LL_B_PROGRESS_B_H			LL_B_PROGRESS_B_Q LL_B_PROGRESS_B_Q
 #define LL_B_PROGRESS_BACKSPACE 	LL_B_PROGRESS_B_H LL_B_PROGRESS_B_H
+
+
+/**
+ * Various length correspondence options
+ */
+#define LL_BA_LC_NONE				0
+#define LL_BA_LC_NODES				1
+
+
+/**
+ * An array used in a benchmark
+ */
+typedef struct {
+
+	/// The array
+	void* ba_data;
+
+	/// Variable
+	void** ba_variable;
+
+	/// Element size
+	size_t ba_element_size;
+
+	/// Length
+	size_t ba_length;
+
+	/// Lenght correspondence
+	int ba_length_correspondence;
+
+} ll_benchmark_array_t;
+
+
+/**
+ * An edge property used in a benchmark
+ */
+typedef struct {
+
+	/// The property variable
+	void** bp_variable;
+
+	/// The property name
+	std::string bp_name;
+
+	/// Element size
+	size_t bp_element_size;
+
+	/// Required?
+	bool bp_required;
+
+} ll_benchmark_edge_property_t;
+
+
+/**
+ * A node property used in a benchmark
+ */
+typedef struct {
+
+	/// The property variable
+	void** bp_variable;
+
+	/// The property name
+	std::string bp_name;
+
+	/// Element size
+	size_t bp_element_size;
+
+	/// Required?
+	bool bp_required;
+
+} ll_benchmark_node_property_t;
 
 
 /**
@@ -60,7 +132,7 @@ class ll_benchmark {
 
 protected:
 
-	Graph& _graph;
+	Graph* _graph;
 	bool _print_progress;
 
 
@@ -72,18 +144,22 @@ private:
 	int _progress_max_sl;
 	int _progress_last_count;
 
+	std::vector<ll_benchmark_array_t> _auto_arrays;
+	std::vector<ll_benchmark_edge_property_t> _auto_edge_properties;
+	std::vector<ll_benchmark_node_property_t> _auto_node_properties;
+
 
 public:
 
 	/**
 	 * Create the benchmark
 	 *
-	 * @param graph the graph
 	 * @param name the benchmark name
 	 */
-	ll_benchmark(Graph& graph, const char* name) : _graph(graph) {
+	ll_benchmark(const char* name) {
 
 		_name = name;
+		_graph = NULL;
 
 		_print_progress = false;
 		_progress_max = 0;
@@ -97,7 +173,15 @@ public:
 	/**
 	 * Destroy the benchmark
 	 */
-	virtual ~ll_benchmark(void) {}
+	virtual ~ll_benchmark(void) {
+
+		for (size_t i = 0; i < _auto_arrays.size(); i++) {
+			if (_auto_arrays[i].ba_data != NULL) {
+				free(_auto_arrays[i].ba_data);
+				*_auto_arrays[i].ba_variable = NULL;
+			}
+		}
+	}
 
 
 	/**
@@ -117,9 +201,97 @@ public:
 
 
 	/**
-	 * Initialize the benchmark
+	 * Get the graph
+	 *
+	 * @return the graph
 	 */
-	virtual void initialize(void) {}
+	inline Graph* graph(void) { return _graph; }
+
+
+	/**
+	 * Initialize the benchmark and set the graph
+	 *
+	 * @param graph the graph
+	 */
+	virtual void initialize(Graph* graph) {
+
+		_graph = graph;
+		if (_graph == NULL) return;
+
+
+		// Resize the auto arrays
+
+		for (size_t i = 0; i < _auto_arrays.size(); i++) {
+			switch (_auto_arrays[i].ba_length_correspondence) {
+				case LL_BA_LC_NODES:
+					if ((ssize_t) _graph->max_nodes()
+							> (ssize_t) _auto_arrays[i].ba_length) {
+
+						if (_auto_arrays[i].ba_data != NULL) {
+							free(_auto_arrays[i].ba_data);
+						}
+
+						_auto_arrays[i].ba_length = _graph->max_nodes();
+						_auto_arrays[i].ba_data = malloc
+							(_auto_arrays[i].ba_element_size
+								* (_auto_arrays[i].ba_length + 16));
+						*_auto_arrays[i].ba_variable = _auto_arrays[i].ba_data;
+					}
+					break;
+			}
+		}
+
+
+		// Initialize the properties
+
+		for (size_t i = 0; i < _auto_edge_properties.size(); i++) {
+			switch (_auto_edge_properties[i].bp_element_size) {
+				case sizeof(uint32_t):
+					*_auto_edge_properties[i].bp_variable
+					 = _graph->get_edge_property_32(
+							 _auto_edge_properties[i].bp_name.c_str());
+					break;
+				case sizeof(uint64_t):
+					*_auto_edge_properties[i].bp_variable
+					 = _graph->get_edge_property_64(
+							 _auto_edge_properties[i].bp_name.c_str());
+					break;
+				default:
+					abort();
+			}
+
+			if (*_auto_edge_properties[i].bp_variable == NULL
+					&& _auto_edge_properties[i].bp_required) {
+				LL_E_PRINT("Error: The graph does not have edge property "
+						"\"%s\".\n", _auto_edge_properties[i].bp_name.c_str());
+				abort();
+			}
+		}
+
+		for (size_t i = 0; i < _auto_node_properties.size(); i++) {
+			switch (_auto_node_properties[i].bp_element_size) {
+				case sizeof(uint32_t):
+					*_auto_node_properties[i].bp_variable
+					 = _graph->get_node_property_32(
+							 _auto_node_properties[i].bp_name.c_str());
+					break;
+				case sizeof(uint64_t):
+					*_auto_node_properties[i].bp_variable
+					 = _graph->get_node_property_64(
+							 _auto_node_properties[i].bp_name.c_str());
+					break;
+				default:
+					abort();
+			}
+
+			if (*_auto_node_properties[i].bp_variable == NULL
+					&& _auto_node_properties[i].bp_required) {
+				LL_E_PRINT("Error: The graph does not have node property "
+						"\"%s\".\n", _auto_node_properties[i].bp_name.c_str());
+				abort();
+			}
+		}
+	}
 
 
 	/**
@@ -147,6 +319,160 @@ public:
 
 
 protected:
+
+
+	/**
+	 * Create a new array that will be automatically resized and deallocated
+	 * on exit that is parallel to the vertices
+	 *
+	 * @param variable the variable
+	 */
+	template <typename T>
+	void create_auto_array_for_nodes(T*& variable) {
+
+		// Static assertions
+
+		int _s1[sizeof(T* ) == sizeof(void* ) ? 1 : -1]; (void) _s1;
+		int _s2[sizeof(T**) == sizeof(void**) ? 1 : -1]; (void) _s2;
+
+
+		// Create and register the auto array
+
+		ll_benchmark_array_t b;
+
+		b.ba_variable = (void**) &variable;
+		b.ba_element_size = sizeof(T);
+		b.ba_length_correspondence = LL_BA_LC_NODES;
+
+		if (_graph != NULL) {
+			b.ba_length = _graph->max_nodes();
+			b.ba_data = malloc(b.ba_element_size
+					* (b.ba_length + 16));
+		}
+		else {
+			b.ba_length = 0;
+			b.ba_data = NULL;
+		}
+
+		variable = (T*) b.ba_data;
+
+		_auto_arrays.push_back(b);
+	}
+
+
+	/**
+	 * Register an automatic edge property variable
+	 *
+	 * @param variable the variable
+	 * @param name the property name
+	 * @param required true if the property is required
+	 */
+	template <typename T>
+	void create_auto_property(ll_mlcsr_edge_property<T>*& variable,
+			const char* name, bool required=true) {
+
+		// Static assertions
+
+		int _s1[sizeof(ll_mlcsr_edge_property<T>* ) == sizeof(void* ) ? 1 : -1];
+		int _s2[sizeof(ll_mlcsr_edge_property<T>**) == sizeof(void**) ? 1 : -1];
+		int _s3[(sizeof(T) == sizeof(uint32_t)
+				|| sizeof(T) == sizeof(uint64_t)) ? 1 : -1];
+		(void) _s1; (void) _s2; (void) _s3;
+
+
+		// Create and register the auto property
+
+		ll_benchmark_edge_property_t b;
+
+		b.bp_variable = (void**) &variable;
+		b.bp_name = name;
+		b.bp_required = required;
+		b.bp_element_size = sizeof(T);
+
+		if (_graph != NULL) {
+			switch (b.bp_element_size) {
+				case sizeof(uint32_t):
+					variable = reinterpret_cast<ll_mlcsr_edge_property<T>*>(
+							_graph->get_edge_property_32(b.bp_name.c_str()));
+					break;
+				case sizeof(uint64_t):
+					variable = reinterpret_cast<ll_mlcsr_edge_property<T>*>(
+							_graph->get_edge_property_64(b.bp_name.c_str()));
+					break;
+				default:
+					abort();
+			}
+
+			if (variable == NULL && b.bp_required) {
+				LL_E_PRINT("Error: The graph does not have edge property "
+						"\"%s\".\n", b.bp_name.c_str());
+				abort();
+			}
+		}
+		else {
+			variable = NULL;
+		}
+
+		_auto_edge_properties.push_back(b);
+	}
+
+
+	/**
+	 * Register an automatic node property variable
+	 *
+	 * @param variable the variable
+	 * @param name the property name
+	 * @param required true if the property is required
+	 */
+	template <typename T>
+	void create_auto_property(ll_mlcsr_node_property<T>*& variable,
+			const char* name, bool required=true) {
+
+		// Static assertions
+
+		int _s1[sizeof(ll_mlcsr_node_property<T>* ) == sizeof(void* ) ? 1 : -1];
+		int _s2[sizeof(ll_mlcsr_node_property<T>**) == sizeof(void**) ? 1 : -1];
+		int _s3[(sizeof(T) == sizeof(uint32_t)
+				|| sizeof(T) == sizeof(uint64_t)) ? 1 : -1];
+		(void) _s1; (void) _s2; (void) _s3;
+
+
+		// Create and register the auto property
+
+		ll_benchmark_node_property_t b;
+
+		b.bp_variable = (void**) &variable;
+		b.bp_name = name;
+		b.bp_required = required;
+		b.bp_element_size = sizeof(T);
+
+		if (_graph != NULL) {
+			switch (b.bp_element_size) {
+				case sizeof(uint32_t):
+					variable = reinterpret_cast<ll_mlcsr_node_property<T>*>(
+							_graph->get_node_property_32(b.bp_name.c_str()));
+					break;
+				case sizeof(uint64_t):
+					variable = reinterpret_cast<ll_mlcsr_node_property<T>*>(
+							_graph->get_node_property_64(b.bp_name.c_str()));
+					break;
+				default:
+					abort();
+			}
+
+			if (variable == NULL && b.bp_required) {
+				LL_E_PRINT("Error: The graph does not have node property "
+						"\"%s\".\n", b.bp_name.c_str());
+				abort();
+			}
+		}
+		else {
+			variable = NULL;
+		}
+
+		_auto_node_properties.push_back(b);
+	}
+
 
 	/**
 	 * Initialize the progress-bar
@@ -238,12 +564,12 @@ protected:
  * @param max the max number of results to print
  */
 template <class Graph>
-void print_results_part(FILE* f, Graph& graph, int* a, int max=50) {
+void print_results_part(FILE* f, Graph* graph, int* a, int max=50) {
 
-	node_t m = std::min<node_t>(max, graph.max_nodes());
+	node_t m = std::min<node_t>(max, graph->max_nodes());
 
 	for (node_t n = 0; n < m; n++) {
-		if (n % 10 == 0) fprintf(f, "%7lld:", (long long) n);
+		if (n % 10 == 0) fprintf(f, "%7ld:", n);
 		fprintf(f, " %7d", a[n]);
 		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
 	}
@@ -261,12 +587,12 @@ void print_results_part(FILE* f, Graph& graph, int* a, int max=50) {
  * @param max the max number of results to print
  */
 template <class Graph>
-void print_results_part(FILE* f, Graph& graph, long* a, int max=50) {
+void print_results_part(FILE* f, Graph* graph, long* a, int max=50) {
 
-	node_t m = std::min<node_t>(max, graph.max_nodes());
+	node_t m = std::min<node_t>(max, graph->max_nodes());
 
 	for (node_t n = 0; n < m; n++) {
-		if (n % 10 == 0) fprintf(f, "%7lld:", (long long) n);
+		if (n % 10 == 0) fprintf(f, "%7ld:", n);
 		fprintf(f, " %7ld", a[n]);
 		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
 	}
@@ -284,35 +610,12 @@ void print_results_part(FILE* f, Graph& graph, long* a, int max=50) {
  * @param max the max number of results to print
  */
 template <class Graph>
-void print_results_part(FILE* f, Graph& graph, long long* a, int max=50) {
+void print_results_part(FILE* f, Graph* graph, float* a, int max=50) {
 
-	node_t m = std::min<node_t>(max, graph.max_nodes());
-
-	for (node_t n = 0; n < m; n++) {
-		if (n % 10 == 0) fprintf(f, "%7lld:", (long long) n);
-		fprintf(f, " %7lld", a[n]);
-		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
-	}
-
-	fprintf(f, "\n");
-}
-
-
-/**
- * Print part of the results
- *
- * @param f the output file
- * @param graph the graph
- * @param a the array of results
- * @param max the max number of results to print
- */
-template <class Graph>
-void print_results_part(FILE* f, Graph& graph, float* a, int max=50) {
-
-	node_t m = std::min<node_t>(max, graph.max_nodes());
+	node_t m = std::min<node_t>(max, graph->max_nodes());
 
 	for (node_t n = 0; n < m; n++) {
-		if (n % 10 == 0) fprintf(f, "%7lld:", (long long) n);
+		if (n % 10 == 0) fprintf(f, "%7ld:", n);
 		fprintf(f, " %0.10f", a[n]);
 		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
 	}
@@ -330,12 +633,12 @@ void print_results_part(FILE* f, Graph& graph, float* a, int max=50) {
  * @param max the max number of results to print
  */
 template <class Graph>
-void print_results_part(FILE* f, Graph& graph, double* a, int max=50) {
+void print_results_part(FILE* f, Graph* graph, double* a, int max=50) {
 
-	node_t m = std::min<node_t>(max, graph.max_nodes());
+	node_t m = std::min<node_t>(max, graph->max_nodes());
 
 	for (node_t n = 0; n < m; n++) {
-		if (n % 10 == 0) fprintf(f, "%7lld:", (long long) n);
+		if (n % 10 == 0) fprintf(f, "%7ld:", n);
 		fprintf(f, " %0.10lf", a[n]);
 		if (n % 10 == 9 || n + 1 == m) fprintf(f, "\n");
 	}

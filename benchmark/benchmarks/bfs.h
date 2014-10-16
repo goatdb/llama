@@ -93,11 +93,10 @@ public:
 	/**
 	 * Create the benchmark
 	 *
-	 * @param graph the graph
 	 * @param r the root
 	 */
-	ll_b_bfs(Graph& graph, node_t r)
-		: ll_benchmark<Graph>(graph, "BFS - Count") {
+	ll_b_bfs(node_t r)
+		: ll_benchmark<Graph>("BFS - Count") {
 
 		root = r;
 	}
@@ -117,7 +116,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		int32_t count = 0;
 
 		bfs_bfs<Graph> _BFS(G, root, count);

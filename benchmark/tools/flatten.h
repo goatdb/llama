@@ -63,11 +63,9 @@ public:
 	/**
 	 * Create the tool
 	 *
-	 * @param graph the graph
 	 * @param out the output directory
 	 */
-	ll_t_flatten(Graph& graph, const char* out)
-		: ll_benchmark<Graph>(graph, "[Tool] Flatten") {
+	ll_t_flatten(const char* out) : ll_benchmark<Graph>("[Tool] Flatten") {
 		_out = out;
 	}
 
@@ -86,7 +84,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		size_t max_nodes = G.max_nodes();
 		bool reverse = G.has_reverse_edges();
 

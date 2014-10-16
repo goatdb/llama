@@ -786,9 +786,14 @@ public:
 
 			for (int i = 0; i <= level; i++) {
 				// TODO Is the following correct?
-				_properties.push_back
-					(new ll_multiversion_property_array<T>
-					 (master->_properties[i], level - i));
+				if (master->_properties[i] == NULL) {
+					_properties.push_back(NULL);
+				}
+				else {
+					_properties.push_back
+						(new ll_multiversion_property_array<T>
+						 (master->_properties[i], level - i));
+				}
 			}
 		}
 	}

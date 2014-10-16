@@ -79,6 +79,7 @@
  *
  * BENCHMARK_WRITABLE
  * BENCHMARK_TASK_ID
+ * BENCHMARK_CONCURRENT_LOAD
  * DO_CP
  * TEST_CXX_ITER
  */
@@ -90,6 +91,7 @@
 //==========================================================================//
 
 //#define BENCHMARK_WRITABLE
+//#define BENCHMARK_CONCURRENT_LOAD
 //#define DO_CP
 #define TEST_CXX_ITER
 
@@ -102,9 +104,12 @@ typedef ll_mlcsr_ro_graph benchmarkable_graph_t;
 #endif
 
 #ifdef BENCHMARK_WRITABLE
-#ifndef LL_DELETIONS
-#warning "Attempting to use BENCHMARK_WRITABLE without LL_DELETIONS"
-#endif
+#	ifndef LL_DELETIONS
+#		warning "Attempting to use BENCHMARK_WRITABLE without LL_DELETIONS"
+#	endif
+#	ifdef LL_STREAMING
+#		error "Using BENCHMARK_WRITABLE with LL_STREAMING"
+#	endif
 #endif
 
 
@@ -268,6 +273,595 @@ int getiostat(struct io_stat* io) {
 #endif
 
 
+/**
+ * Statistics, counters, and the corresponding temporary contexts
+ */
+class ll_benchmark_stats {
+
+public:
+
+	time_t start_time;
+	struct tm tm_start_time;
+
+	long maxrss_start;
+	long maxrss_loaded;
+
+	std::vector<double> load_times;
+	std::vector<double> load_pull_times;
+	std::vector<double> load_cp_times;
+
+	std::vector<double> delete_snapshot_times;
+	
+	std::vector<double> runtimes;
+	std::vector<double> cpu_times;
+	std::vector<double> cpu_user_times;
+	std::vector<double> cpu_sys_times;
+	std::vector<double> cpu_util;
+
+	std::vector<long> major_faults;
+	std::vector<long> in_blocks;
+	std::vector<long> out_blocks;
+
+	std::vector<size_t> io_rchar;
+	std::vector<size_t> io_wchar;
+	std::vector<size_t> io_syscr;
+	std::vector<size_t> io_syscw;
+	std::vector<size_t> io_read_bytes;
+	std::vector<size_t> io_write_bytes;
+	std::vector<size_t> io_cancelled_write_bytes;
+
+
+private:
+
+	// Benchmark stats
+	
+	struct io_stat _b_io_start;
+	struct rusage _b_ru_start;
+	double _b_t_start;
+
+
+	// Load stats
+	
+	double _l_t_start;
+	double _l_t_pull_start;
+	double _l_t_cp_start;
+
+
+	// Delete stats
+	
+	double _d_t_start;
+
+
+public:
+
+	/**
+	 * Create an instance of ll_benchmark_stats
+	 */
+	ll_benchmark_stats(void) {
+
+		struct rusage ru_start;
+		getrusage(RUSAGE_SELF, &ru_start);
+		maxrss_start = ru_start.ru_maxrss;
+
+		maxrss_loaded = maxrss_start;	// Zero this relative to maxrss_start
+
+		start_time = time(NULL);
+		localtime_r(&start_time, &tm_start_time);
+	}
+
+
+	/**
+	 * Start counters before benchmark
+	 */
+	void before_benchmark(void) {
+
+#if defined(__linux__)
+		getiostat(&_b_io_start);
+#endif
+
+		getrusage(RUSAGE_SELF, &_b_ru_start);
+		_b_t_start = ll_get_time_ms();
+	}
+
+
+	/**
+	 * Stop counters after benchmark
+	 */
+	void after_benchmark(void) {
+
+		double t = ll_get_time_ms() - _b_t_start;
+		struct rusage ru_end;
+		getrusage(RUSAGE_SELF, &ru_end);
+
+#if defined(__linux__)
+		struct io_stat io_end;
+		getiostat(&io_end);
+#endif
+
+		runtimes.push_back(t);
+		cpu_times.push_back(ll_timeval_to_ms(ru_end.ru_utime)
+				+ ll_timeval_to_ms(ru_end.ru_stime)
+				- ll_timeval_to_ms(_b_ru_start.ru_utime)
+				- ll_timeval_to_ms(_b_ru_start.ru_stime));
+		cpu_user_times.push_back(ll_timeval_to_ms(ru_end.ru_utime)
+				- ll_timeval_to_ms(_b_ru_start.ru_utime));
+		cpu_sys_times.push_back(ll_timeval_to_ms(ru_end.ru_stime)
+				- ll_timeval_to_ms(_b_ru_start.ru_stime));
+		cpu_util.push_back((cpu_times[cpu_times.size()-1]
+					/ omp_get_max_threads()) / t);
+		major_faults.push_back(ru_end.ru_majflt - _b_ru_start.ru_majflt);
+		in_blocks.push_back(ru_end.ru_inblock - _b_ru_start.ru_inblock);
+		out_blocks.push_back(ru_end.ru_oublock - _b_ru_start.ru_oublock);
+
+#if defined(__linux__)
+		io_rchar.push_back(io_end.io_rchar - _b_io_start.io_rchar);
+		io_wchar.push_back(io_end.io_wchar - _b_io_start.io_wchar);
+		io_syscr.push_back(io_end.io_syscr - _b_io_start.io_syscr);
+		io_syscw.push_back(io_end.io_syscw - _b_io_start.io_syscw);
+		io_read_bytes.push_back(io_end.io_read_bytes
+				- _b_io_start.io_read_bytes);
+		io_write_bytes.push_back(io_end.io_write_bytes
+				- _b_io_start.io_write_bytes);
+		io_cancelled_write_bytes.push_back(
+				io_end.io_cancelled_write_bytes
+				- _b_io_start.io_cancelled_write_bytes);
+#endif
+	}
+
+
+	/**
+	 * Start counters before load
+	 */
+	void before_load(void) {
+
+		_l_t_start = ll_get_time_ms();
+	}
+
+
+	/**
+	 * Stop counters after load
+	 */
+	void after_load(void) {
+
+		double t = ll_get_time_ms() - _l_t_start;
+		load_times.push_back(t);
+
+		struct rusage r_loaded;
+		getrusage(RUSAGE_SELF, &r_loaded);
+		maxrss_loaded = r_loaded.ru_maxrss;
+	}
+
+
+	/**
+	 * Start counters before load's pull phase
+	 */
+	void before_load_pull(void) {
+
+		_l_t_pull_start = ll_get_time_ms();
+	}
+
+
+	/**
+	 * Stop counters after load's pull phase
+	 */
+	void after_load_pull(void) {
+
+		double t = ll_get_time_ms() - _l_t_pull_start;
+		load_pull_times.push_back(t);
+	}
+
+
+	/**
+	 * Start counters before load's CP phase
+	 */
+	void before_load_cp(void) {
+
+		_l_t_cp_start = ll_get_time_ms();
+	}
+
+
+	/**
+	 * Stop counters after load's CP phase
+	 */
+	void after_load_cp(void) {
+
+		double t = ll_get_time_ms() - _l_t_cp_start;
+		load_cp_times.push_back(t);
+	}
+
+
+	/**
+	 * Start counters before deleting a snapshot
+	 */
+	void before_delete_snapshot(void) {
+
+		_d_t_start = ll_get_time_ms();
+	}
+
+
+	/**
+	 * Stop counters after deleting a snapshot
+	 */
+	void after_delete_snapshot(void) {
+
+		double t = ll_get_time_ms() - _d_t_start;
+		delete_snapshot_times.push_back(t);
+	}
+
+
+	/**
+	 * Print the statistics
+	 *
+	 * @param f the output file
+	 */
+	void print_stats(FILE* f = stdout) {
+
+		if (load_times.size() > 0) {
+			fprintf(f, "\nLOAD\n");
+#ifdef LL_STREAMING
+			print_time(f, "Load Time  : ",
+					ll_mean(load_times), false);
+			print_time(f, " each, ", ll_sum(load_times), false);
+			fprintf(f, " total\n");
+#else
+			print_time(f, "Load Time  : ", ll_mean(load_times));
+#endif
+			fprintf(f, "Memory     : %0.2lf MB\n",
+					(maxrss_loaded - maxrss_start) / 1024.0);
+		}
+
+		if (runtimes.size() > 0) {
+			if (runtimes.size() == 1) {
+
+				fprintf(f, "\nTIME\n");
+				print_time(f, "Time       : ", ll_sum(runtimes));
+				print_time(f, "User Time  : ", ll_sum(cpu_user_times));
+				print_time(f, "System Time: ", ll_sum(cpu_sys_times));
+				print_time(f, "CPU Time   : ", ll_sum(cpu_times));
+				fprintf(f, "CPU Util.  : %0.2lf%%\n", 100*ll_mean(cpu_util));
+
+				fprintf(f, "\nRESOURCE USAGE\n");
+				fprintf(f, "Mjr Faults : %ld\n", ll_sum(major_faults));
+				fprintf(f, "In Blocks  : %ld\n", ll_sum(in_blocks));
+				fprintf(f, "Out Blocks : %ld\n", ll_sum(out_blocks));
+#if defined(__linux__)
+				fprintf(f, "In Bytes   : %ld (%0.2lf GB)\n",
+						ll_sum(io_read_bytes),
+						ll_sum(io_read_bytes) / (1024.0*1024.0*1024.0));
+				fprintf(f, "Out Bytes  : %ld (%0.2lf GB)\n",
+						ll_sum(io_write_bytes),
+						ll_sum(io_write_bytes) / (1024.0*1024.0*1024.0));
+#endif
+			}
+			else {
+				fprintf(f, "\nTIME\n");
+#ifdef LL_STREAMING
+				print_time_and_confidence(f, "Time       : ",
+						ll_mean(runtimes), ll_c95(runtimes), false);
+				print_time(f, " each, ", ll_sum(runtimes), false);
+				fprintf(f, " total\n");
+#else
+				print_time_and_confidence(f, "Time       : ",
+						ll_mean(runtimes), ll_c95(runtimes));
+#endif
+				print_time_and_confidence(f, "User Time  : ",
+						ll_mean(cpu_user_times), ll_c95(cpu_user_times));
+				print_time_and_confidence(f, "System Time: ",
+						ll_mean(cpu_sys_times), ll_c95(cpu_sys_times));
+				print_time_and_confidence(f, "CPU Time   : ",
+						ll_mean(cpu_times), ll_c95(cpu_times));
+				fprintf(f, "CPU Util.  : %0.2lf +- %0.2lf%%\n",
+						100*ll_mean(cpu_util), 100*ll_c95(cpu_util));
+
+				fprintf(f, "\nRESOURCE USAGE\n");
+				fprintf(f, "Mjr Faults : %0.2lf +- %0.2lf\n",
+						ll_mean(major_faults), ll_c95(major_faults));
+				fprintf(f, "In Blocks  : %0.2lf +- %0.2lf\n",
+						ll_mean(in_blocks), ll_c95(in_blocks));
+				fprintf(f, "Out Blocks : %0.2lf +- %0.2lf\n",
+						ll_mean(out_blocks), ll_c95(out_blocks));
+#if defined(__linux__)
+				fprintf(f, "In Bytes   : %0.2lf +- %0.2lf "
+						"(%0.2lf +- %0.2lf GB)\n",
+						ll_mean(io_read_bytes),
+						ll_c95(io_read_bytes),
+						ll_mean(io_read_bytes) / (1024.0*1024.0*1024.0),
+						ll_c95(io_read_bytes) / (1024.0*1024.0*1024.0));
+				fprintf(f, "Out Butes  : %0.2lf +- %0.2lf "
+						"(%0.2lf +- %0.2lf GB)\n",
+						ll_mean(io_write_bytes),
+						ll_c95(io_write_bytes),
+						ll_mean(io_write_bytes) / (1024.0*1024.0*1024.0),
+						ll_c95(io_write_bytes) / (1024.0*1024.0*1024.0));
+#endif
+			}
+		}
+		printf("\n");
+
+		fflush(f);
+	}
+
+
+	/**
+	 * Save the statistics to a file
+	 *
+	 * @param G the graph
+	 * @param representation the representation/configuration identifier
+	 * @param task the task identifier
+	 */
+	template <class Graph>
+	void save_stats(Graph& G, const char* representation, const char* task) {
+
+
+		// Generate the file name
+
+		char date_time[64];
+		snprintf(date_time, 64, "%04d%02d%02d-%02d%02d%02d",
+				tm_start_time.tm_year + 1900, tm_start_time.tm_mon + 1,
+				tm_start_time.tm_mday, tm_start_time.tm_hour,
+				tm_start_time.tm_min, tm_start_time.tm_sec);
+
+		std::string file_name = representation;
+		file_name += "__";
+		file_name += task;
+		file_name += "__";
+		file_name += date_time;
+		file_name += ".csv";
+
+
+		// Open the file
+
+		FILE* f = fopen(file_name.c_str(), "w");
+		if (f == NULL) {
+			perror("fopen");
+			abort();
+		}
+
+
+		// Write the meta-data
+
+		std::ostringstream header;
+		std::ostringstream data;
+
+		data << std::setprecision(6) << std::fixed;
+
+		header << "representation,specialized";
+		data << representation;
+#if BENCHMARK_TASK_ID >= 0
+		data << ",true";
+#else
+		data << ",false";
+#endif
+
+		header << ",year,month,day,hour,min,sec";
+		data << "," << tm_start_time.tm_year + 1900;
+		data << "," << tm_start_time.tm_mon + 1;
+		data << "," << tm_start_time.tm_mday;
+		data << "," << tm_start_time.tm_hour;
+		data << "," << tm_start_time.tm_min;
+		data << "," << tm_start_time.tm_sec;
+
+		header << ",load_time";
+		if (load_times.empty()) data << ",0";
+		else data << "," << ll_mean(load_times);
+
+		header << ",graph_max_nodes,graph_levels";
+		data << G.max_nodes();
+		data << G.num_levels();
+
+		fprintf(f, "%s\n%s\n\n", header.str().c_str(), data.str().c_str());
+
+
+		// Write the summary results
+
+		header.str("");
+		data.str("");
+
+		header << "name";
+		data << task;
+
+		header << ",runtime_ms,stdev_ms,min_ms,max_ms,c95_ms";
+		data << "," << ll_mean(runtimes);
+		data << "," << ll_stdev(runtimes);
+		data << "," << ll_min(runtimes);
+		data << "," << ll_max(runtimes);
+		data << "," << ll_c95(runtimes);
+
+		header << ",cpu_ms,cpu_util,major_faults,in_blocks,out_blocks";
+		data << "," << ll_mean(cpu_times);
+		data << "," << ll_mean(cpu_util);
+		data << "," << ll_mean(major_faults);
+		data << "," << ll_mean(in_blocks);
+		data << "," << ll_mean(out_blocks);
+
+		fprintf(f, "%s\n%s\n\n", header.str().c_str(), data.str().c_str());
+
+
+		// Write the individual operations
+
+		header.str("");
+		header << "id,runtime_ms,cpu_ms,cpu_util";
+		header << ",major_faults,in_blocks,out_blocks";
+
+		fprintf(f, "%s\n", header.str().c_str());
+
+		for (size_t i = 0; i < runtimes.size(); i++) {
+			data.str("");
+			data << i << "," << runtimes[i];
+			data << "," << cpu_times[i];
+			data << "," << cpu_util[i];
+			data << "," << major_faults[i];
+			data << "," << in_blocks[i];
+			data << "," << out_blocks[i];
+			fprintf(f, "%s\n", data.str().c_str());
+		}
+
+
+		// Close
+
+		fclose(f);
+	}
+};
+
+
+/**
+ * The benchmark repeat count and current state
+ */
+class ll_benchmark_counter {
+
+public:
+
+	size_t benchmark_count;
+	size_t current_iteration;		// within benchmark_count
+
+	size_t max_batches;
+	size_t current_batch;
+
+	bool print_progress;
+	bool verbose;
+
+
+public:
+
+	/**
+	 * Create an instance of ll_benchmark_counter
+	 */
+	ll_benchmark_counter(void) {
+
+		benchmark_count = 1;
+		current_iteration = 0;
+
+		max_batches = 0;
+		current_batch = 0;
+
+		print_progress = true;
+		verbose = false;
+	}
+
+
+	/**
+	 * Print the stuff before a batch
+	 */
+	void print_before_batch() {
+		if (print_progress && verbose) {
+			fprintf(stderr, "\r%5lu: Loading...", current_batch+1);
+		}
+	}
+
+
+	/**
+	 * Print the stuff after a batch
+	 *
+	 * @param stats the stats
+	 */
+	void print_after_batch_load(const ll_benchmark_stats& stats) {
+		if (print_progress && verbose) {
+			fprintf(stderr, "\r%5lu:           \b\b\b\b\b\b\b\b\b\b",
+					current_batch);
+#ifndef BENCHMARK_CONCURRENT_LOAD
+			if (benchmark_count > 1) {
+#endif
+				double load_time
+					= stats.load_times[stats.load_times.size()-1];
+				double load_pull
+					= stats.load_pull_times[stats.load_pull_times.size()-1];
+				double load_cp
+					= stats.load_cp_times[stats.load_cp_times.size()-1];
+				double load_delete
+					= stats.delete_snapshot_times.empty() ? 0
+					: stats.delete_snapshot_times
+					[stats.delete_snapshot_times.size()-1];
+				print_time(stderr, "Load: ", load_time, false);
+				fprintf(stderr, " (%0.3lf pull, %0.3lf cp, %0.3lf delete)\n",
+						load_pull/1000.0, load_cp/1000.0,
+						load_delete/1000.0);
+#ifndef BENCHMARK_CONCURRENT_LOAD
+			}
+#endif
+		}
+	}
+
+
+	/**
+	 * Print the stuff before a benchmark
+	 */
+	void print_before_benchmark() {
+
+		if (print_progress) {
+			if (verbose) {
+#ifdef LL_STREAMING
+				if (benchmark_count > 1)
+					fprintf(stderr, "\r%5lu - %lu/%lu: ",
+							current_batch, current_iteration+1,
+							benchmark_count);
+				else
+					fprintf(stderr, "\r%5lu: ", current_batch);
+#else
+				fprintf(stderr, "\r%3lu/%lu: ", current_iteration+1,
+						benchmark_count);
+#endif
+			}
+			else {
+				fprintf(stderr, ".");
+				if ((current_iteration + 1) % 10 == 0) {
+					fprintf(stderr, "%lu", current_iteration + 1);
+				}
+			}
+		}
+	}
+
+
+	/**
+	 * Print the stuff after a benchmark
+	 *
+	 * @param stats the stats
+	 */
+	void print_after_benchmark(const ll_benchmark_stats& stats) {
+
+		if (print_progress && verbose) {
+			double t = stats.runtimes[stats.runtimes.size()-1];
+#ifdef LL_STREAMING
+#	ifndef BENCHMARK_CONCURRENT_LOAD
+			if (current_iteration == 0 && benchmark_count == 1) {
+				double load_time
+					= stats.load_times[stats.load_times.size()-1];
+				double load_pull
+					= stats.load_pull_times[stats.load_pull_times.size()-1];
+				double load_cp
+					= stats.load_cp_times[stats.load_cp_times.size()-1];
+				double load_delete
+					= stats.delete_snapshot_times.empty() ? 0
+					: stats.delete_snapshot_times
+					[stats.delete_snapshot_times.size()-1];
+				print_time(stderr, "Load: ", load_time, false);
+				fprintf(stderr, " (%0.3lf pull, %0.3lf cp, %0.3lf delete)",
+						load_pull/1000.0, load_cp/1000.0,
+						load_delete/1000.0);
+				print_time(stderr, ", Run: ", t);
+			}
+			else {
+				print_time(stderr, "Run: ", t);
+			}
+#	else
+			print_time(stderr, "Run: ", t);
+#	endif
+#else
+			print_time(stderr, "", t);
+#endif
+		}
+	}
+
+
+	/**
+	 * Print stuff at the end
+	 */
+	void print_at_end() {
+		if (print_progress && !verbose) {
+			fprintf(stderr, "\n");
+		}
+	}
+};
+
 
 //==========================================================================//
 // Things to run: Benchmarks, tools, and tests                              //
@@ -378,7 +972,7 @@ static ll_runnable_thing g_runnable_things[] = {
 // The Command-Line Arguments                                               //
 //==========================================================================//
 
-static const char* SHORT_OPTIONS = "c:C:d:DIhl:LNo:OP:r:R:t:ST:UvX:"
+static const char* SHORT_OPTIONS = "c:C:d:DIhl:Ln:No:OP:r:R:t:ST:UvX:"
 	IF_LL_STREAMING("B:M:W:");
 
 static struct option LONG_OPTIONS[] =
@@ -392,6 +986,7 @@ static struct option LONG_OPTIONS[] =
 	{"level"        , required_argument, 0, 'l'},
 	{"levels"       , required_argument, 0, 'l'},
 	{"load"         , no_argument,       0, 'L'},
+	{"num-iters"    , required_argument, 0, 'n'},
 	{"no-properties", no_argument,       0, 'N'},
 	{"output"       , required_argument, 0, 'o'},
 	{"print"        , required_argument, 0, 'P'},
@@ -442,6 +1037,7 @@ static void usage(const char* arg0) {
 #ifdef LL_STREAMING
 	fprintf(stderr, "  -M, --max-batches M   Set the maximum number of batches\n");
 #endif
+	fprintf(stderr, "  -n, --num-iters N     Set the number of iterations (if applicable)\n");
 	fprintf(stderr, "  -N, --no-properties   Do not load (ingest) properties\n");
 	fprintf(stderr, "  -o, --output FILE     Write the query output to a file\n");
 	fprintf(stderr, "  -O, --undir-order     Load undirected by ordering all edges\n");
@@ -486,6 +1082,80 @@ static void usage(const char* arg0) {
 
 
 //==========================================================================//
+// Benchmark Components                                                     //
+//==========================================================================//
+
+/**
+ * Load a part of the graph using the writable representation
+ * 
+ * @param graph the writable graph
+ * @param data_source the data source
+ * @param loader_config the loader configuration
+ * @param batch_size the batch size (the max number of edges to load)
+ * @param window_size the streaming window size (if streaming)
+ * @param stats the stats
+ * @return true if the graph was loaded
+ */
+bool load_batch_via_writable_graph(ll_writable_graph& graph,
+		ll_data_source& data_source, const ll_loader_config& loader_config,
+		size_t batch_size, ssize_t window_size, ll_benchmark_stats& stats) {
+
+	stats.before_load();
+
+	stats.before_load_pull();
+	bool loaded = data_source.pull(&graph, batch_size);
+	stats.after_load_pull();
+	if (!loaded) return false;
+
+	stats.before_load_cp();
+	graph.checkpoint(&loader_config);
+	stats.after_load_cp();
+
+#ifdef LL_STREAMING
+	if (window_size > 0 && graph.num_levels() >= (size_t) window_size) {
+		graph.set_min_level(graph.num_levels() - window_size);
+		if (graph.num_levels() >= (size_t) window_size + 2) {
+			stats.before_delete_snapshot();
+			graph.delete_level(graph.num_levels() - window_size - 2);
+			stats.after_delete_snapshot();
+		}
+	}
+#endif
+
+	stats.after_load();
+
+	return true;
+}
+
+
+/**
+ * Run the benchmark on the given graph
+ *
+ * @param graph the graph
+ * @param benchmark the benchmark
+ * @param stats the stats
+ * @return the return code
+ */
+template <class Graph>
+double run_benchmark(Graph& graph, ll_benchmark<Graph>* benchmark,
+		ll_benchmark_stats& stats) {
+
+	benchmark->initialize(&graph);
+
+	stats.before_benchmark();
+	double return_d = benchmark->run();
+	stats.after_benchmark();
+
+	double r_d_adj = benchmark->finalize();
+	if (!std::isnan(r_d_adj)) return_d = r_d_adj;
+
+	return return_d;
+}
+
+
+
+
+//==========================================================================//
 // The Main Function                                                        //
 //==========================================================================//
 
@@ -500,13 +1170,14 @@ int main(int argc, char** argv)
 	char* output_file = NULL;
 
 	bool verbose = false;
-	bool print_progress = true;
 	bool save_execution_statistics = false;
+
+	ll_benchmark_counter counter;
 
 	int min_level = 0;
 	int max_level = -1;
-	int count = 1;
 	int num_threads = -1;
+	int num_iters = -1;
 
 	node_t root_node = 0; (void) root_node;
 	node_t print_node_from = LL_NIL_NODE;
@@ -516,9 +1187,10 @@ int main(int argc, char** argv)
 	bool do_in_edges = false;
 	ll_loader_config loader_config;
 
+	int concurrent_load_threads = 1; (void) concurrent_load_threads;
+
 	int streaming_batch = 1000 * 1000; (void) streaming_batch;
 	int streaming_window = 10; (void) streaming_window;
-	int streaming_max_batches = 0; (void) streaming_max_batches;
 
 
 	// Pase the command-line arguments
@@ -540,7 +1212,7 @@ int main(int argc, char** argv)
 				break;
 
 			case 'c':
-				count = atoi(optarg);
+				counter.benchmark_count = atoi(optarg);
 				break;
 
 			case 'C':
@@ -581,12 +1253,16 @@ int main(int argc, char** argv)
 				do_load = true;
 				break;
 
+			case 'n':
+				num_iters = atoi(optarg);
+				break;
+
 			case 'N':
 				loader_config.lc_no_properties = true;
 				break;
 
 			case 'M':
-				streaming_max_batches = atoi(optarg);
+				counter.max_batches = atoi(optarg);
 				break;
 
 			case 'o':
@@ -660,6 +1336,8 @@ int main(int argc, char** argv)
 				abort();
 		}
 	}
+
+	counter.verbose = verbose;
 
 	std::vector<std::string> input_files;
 	for (int i = optind; i < argc; i++) {
@@ -773,32 +1451,89 @@ int main(int argc, char** argv)
 	}
 
 
-	// Counters and helper variables
+	// Create the benchmark
 
-	double return_d = 0;
+	ll_benchmark<benchmarkable_graph_t>* benchmark = NULL;
 
-	int load_count = 0;
-	double load_time = 0;
+	int pagerank_iters = num_iters < 0 ? 10 : num_iters;
+	(void) pagerank_iters;
 
-	long maxrss_loaded = 0;
-	
-	std::vector<double> runtimes;
-	std::vector<double> cpu_times;
-	std::vector<double> cpu_user_times;
-	std::vector<double> cpu_sys_times;
-	std::vector<double> cpu_util;
+#define B BENCHMARK_TASK_ID
+#if B < 0 || B == 0
+	LL_RT_COND_CREATE(run_task_class,  0, ll_b_avg_teen_cnt, 0);
+#endif
+#if B < 0 || B == 1
+	LL_RT_COND_CREATE(run_task_class,  1, ll_b_bc_adj);
+#endif
+#if B < 0 || B == 2
+	LL_RT_COND_CREATE(run_task_class,  2, ll_b_bc_random, 100);
+#endif
+#if B < 0 || B == 3
+	LL_RT_COND_CREATE(run_task_class,  3, ll_b_bfs, root_node);
+#endif
+#if B < 0 || B == 4
+	LL_RT_COND_CREATE(run_task_class,  4, ll_b_pagerank_pull_float, pagerank_iters);
+#endif
+#if B < 0 || B == 5
+	LL_RT_COND_CREATE(run_task_class,  5, ll_b_pagerank_push_float, pagerank_iters);
+#endif
+#if B < 0 || B == 6
+	LL_RT_COND_CREATE_EXT(run_task_class,  6, ll_b_sssp_weighted, float,
+			root_node, "weight");
+#endif
+#if B < 0 || B == 7
+	LL_RT_COND_CREATE(run_task_class,  7, ll_b_sssp_unweighted_bfs, root_node);
+#endif
+#if B < 0 || B == 8
+	LL_RT_COND_CREATE(run_task_class,  8, ll_b_tarjan_scc);
+#endif
+#if B < 0 || B == 9
+	LL_RT_COND_CREATE(run_task_class,  9, ll_b_triangle_counting_LI);
+#endif
+#if B < 0 || B == 10
+	LL_RT_COND_CREATE(run_task_class, 10, ll_b_triangle_counting_LOD);
+#endif
+#if B < 0 || B == 11
+	LL_RT_COND_CREATE(run_task_class, 11, ll_b_triangle_counting_LU);
+#endif
+#if B < 0 || B == 12
+# ifdef BENCHMARK_WRITABLE
+	LL_RT_COND_CREATE(run_task_class, 12, ll_t_delete_edgesraph);
+# endif
+#endif
+#if B < 0 || B == 13
+# ifdef BENCHMARK_WRITABLE
+	LL_RT_COND_CREATE(run_task_class, 13, ll_t_delete_nodesraph);
+# endif
+#endif
+#if B < 0 || B == 14
+	LL_RT_COND_CREATE(run_task_class, 14, ll_t_level_spread);
+#endif
+#if B < 0 || B == 15
+	LL_RT_COND_CREATE(run_task_class, 15, ll_t_degree_distribution);
+#endif
+#if B < 0 || B == 16
+	LL_RT_COND_CREATE(run_task_class, 16, ll_t_flatten, "db-m");
+#endif
+#if B < 0 || B == 17
+	LL_RT_COND_CREATE(run_task_class, 17, ll_t_dump);
+#endif
+#if B < 0 || B == 18
+	LL_RT_COND_CREATE_EXT(run_task_class, 18, ll_t_edge_property_stats,
+			uint32_t, "stream-weight");
+#endif
+#if B < 0 || B == 19
+	LL_RT_COND_CREATE(run_task_class, 19, ll_b_pagerank_pull_double, pagerank_iters);
+#endif
+#if B < 0 || B == 20
+	LL_RT_COND_CREATE(run_task_class, 20, ll_b_pagerank_push_double, pagerank_iters);
+#endif
+#if B < 0 || B == 21
+	LL_RT_COND_CREATE(run_task_class, 21, ll_b_sssp_unweighted_iter, root_node);
+#endif
+#undef B
 
-	std::vector<long> major_faults;
-	std::vector<long> in_blocks;
-	std::vector<long> out_blocks;
-
-	std::vector<size_t> io_rchar;
-	std::vector<size_t> io_wchar;
-	std::vector<size_t> io_syscr;
-	std::vector<size_t> io_syscw;
-	std::vector<size_t> io_read_bytes;
-	std::vector<size_t> io_write_bytes;
-	std::vector<size_t> io_cancelled_write_bytes;
+	if (benchmark == NULL) counter.benchmark_count = 0;
 
 
 	// Preallocate some writable objects
@@ -826,13 +1561,30 @@ int main(int argc, char** argv)
 #endif
 
 
+	// Counters and helper variables
+
+	double return_d = 0;
+	ll_benchmark_stats stats;
+
+
+	// Print the header
+
+	if (benchmark != NULL) {
+
+		char s_start_time[64];
+		strftime(s_start_time, sizeof(s_start_time), "%m/%d/%y %H:%M:%S",
+				&stats.tm_start_time);
+
+		printf("Benchmark  : %s\n", benchmark->name());
+		printf("Start Time : %s\n", s_start_time);
+		printf("Count      : %lu\n", counter.benchmark_count);
+		fflush(stdout);
+	}
+
+
 	// Prepare the benchmark
 
-	struct rusage r_start;
-	getrusage(RUSAGE_SELF, &r_start);
-	long maxrss_start = r_start.ru_maxrss;
-
-	double t_load_start = ll_get_time_ms();
+	stats.before_load();
 
 	bool ll = true; (void) ll;
 	loader_config.lc_reverse_edges = needs_reverse_edges;
@@ -863,7 +1615,7 @@ int main(int argc, char** argv)
 			return 1;
 		}
 
-		if (verbose) fprintf(stderr, "Loading:\n");
+		if (verbose) fprintf(stderr, "\nLoading:\n");
 		for (int i = 0; i <= max_level; i++) {
 			if (verbose) fprintf(stderr, " %2d: %s", i, input_files[i].c_str());
 			double ts = ll_get_time_ms();
@@ -900,17 +1652,12 @@ int main(int argc, char** argv)
 						graph.max_edges(graph.num_levels() - 2) / tt);
 			}
 		}
-		if (verbose) fprintf(stderr, "\n");
+		//if (verbose) fprintf(stderr, "\n");
 
-		load_time += ll_get_time_ms() - t_load_start;
-		load_count++;
+		stats.after_load();
 	}
 
 #endif
-
-	struct rusage r_loaded;
-	getrusage(RUSAGE_SELF, &r_loaded);
-	maxrss_loaded = r_loaded.ru_maxrss;
 
 
 	// Prepare the graph
@@ -981,109 +1728,9 @@ int main(int argc, char** argv)
 	}
 
 
-	// Create the benchmark
-
-	ll_benchmark<benchmarkable_graph_t>* benchmark = NULL;
-
-#define B BENCHMARK_TASK_ID
-#if B < 0 || B == 0
-	LL_RT_COND_CREATE(run_task_class,  0, ll_b_avg_teen_cnt, G, 0);
-#endif
-#if B < 0 || B == 1
-	LL_RT_COND_CREATE(run_task_class,  1, ll_b_bc_adj, G);
-#endif
-#if B < 0 || B == 2
-	LL_RT_COND_CREATE(run_task_class,  2, ll_b_bc_random, G, 100);
-#endif
-#if B < 0 || B == 3
-	LL_RT_COND_CREATE(run_task_class,  3, ll_b_bfs, G, root_node);
-#endif
-#if B < 0 || B == 4
-	LL_RT_COND_CREATE(run_task_class,  4, ll_b_pagerank_pull_float, G, 10);
-#endif
-#if B < 0 || B == 5
-	LL_RT_COND_CREATE(run_task_class,  5, ll_b_pagerank_push_float, G, 10);
-#endif
-#if B < 0 || B == 6
-	LL_RT_COND_CREATE_EXT(run_task_class,  6, ll_b_sssp_weighted, float, G,
-			root_node, "weight");
-#endif
-#if B < 0 || B == 7
-	LL_RT_COND_CREATE(run_task_class,  7, ll_b_sssp_unweighted_bfs, G, root_node);
-#endif
-#if B < 0 || B == 8
-	LL_RT_COND_CREATE(run_task_class,  8, ll_b_tarjan_scc, G);
-#endif
-#if B < 0 || B == 9
-	LL_RT_COND_CREATE(run_task_class,  9, ll_b_triangle_counting_LI, G);
-#endif
-#if B < 0 || B == 10
-	LL_RT_COND_CREATE(run_task_class, 10, ll_b_triangle_counting_LOD, G);
-#endif
-#if B < 0 || B == 11
-	LL_RT_COND_CREATE(run_task_class, 11, ll_b_triangle_counting_LU, G);
-#endif
-#if B < 0 || B == 12
-# ifdef BENCHMARK_WRITABLE
-	LL_RT_COND_CREATE(run_task_class, 12, ll_t_delete_edges, graph);
-# endif
-#endif
-#if B < 0 || B == 13
-# ifdef BENCHMARK_WRITABLE
-	LL_RT_COND_CREATE(run_task_class, 13, ll_t_delete_nodes, graph);
-# endif
-#endif
-#if B < 0 || B == 14
-	LL_RT_COND_CREATE(run_task_class, 14, ll_t_level_spread, G);
-#endif
-#if B < 0 || B == 15
-	LL_RT_COND_CREATE(run_task_class, 15, ll_t_degree_distribution, G);
-#endif
-#if B < 0 || B == 16
-	LL_RT_COND_CREATE(run_task_class, 16, ll_t_flatten, G, "db-m");
-#endif
-#if B < 0 || B == 17
-	LL_RT_COND_CREATE(run_task_class, 17, ll_t_dump, G);
-#endif
-#if B < 0 || B == 18
-	LL_RT_COND_CREATE_EXT(run_task_class, 18, ll_t_edge_property_stats,
-			uint32_t, G, "stream-weight");
-#endif
-#if B < 0 || B == 19
-	LL_RT_COND_CREATE(run_task_class, 19, ll_b_pagerank_pull_double, G, 10);
-#endif
-#if B < 0 || B == 20
-	LL_RT_COND_CREATE(run_task_class, 20, ll_b_pagerank_push_double, G, 10);
-#endif
-#if B < 0 || B == 21
-	LL_RT_COND_CREATE(run_task_class, 21, ll_b_sssp_unweighted_iter, G, root_node);
-#endif
-#undef B
-
-
-	// Print the header
-
-	time_t start_time = time(NULL);
-	struct tm tm_start_time;
-	localtime_r(&start_time, &tm_start_time);
-
-	if (benchmark != NULL) {
-
-		char s_start_time[64];
-		strftime(s_start_time, sizeof(s_start_time), "%m/%d/%y %H:%M:%S",
-				&tm_start_time);
-
-		printf("Benchmark  : %s\n", benchmark->name());
-		printf("Start Time : %s\n", s_start_time);
-		printf("Count      : %d\n", count);
-	}
-
-
 	// Run the benchmark
 
-	if (benchmark == NULL) count = 0;
-
-	if (print_progress && count > 0) {
+	if (counter.print_progress && counter.benchmark_count > 0) {
 		benchmark->set_print_progress(verbose);
 
 		if (verbose) {
@@ -1095,7 +1742,22 @@ int main(int argc, char** argv)
 	}
 
 
-#ifdef LL_STREAMING
+#ifdef BENCHMARK_CONCURRENT_LOAD
+	int concurrent_task_threads
+		= (num_threads > 0 ? num_threads : omp_get_max_threads())
+		- concurrent_load_threads;
+
+	if (concurrent_task_threads <= 0) {
+		fprintf(stderr, "Error: No threads left for execution\n");
+		return 1;
+	}
+
+    omp_set_num_threads(2);		// Probably not necessary
+    omp_set_nested(1);
+#endif
+
+
+#if defined(LL_STREAMING)
 
 	ll_file_loaders loaders;
 	ll_file_loader* loader = loaders.loader_for(input_files[0].c_str());
@@ -1110,152 +1772,128 @@ int main(int argc, char** argv)
 		combined_data_source.add(d);
 	}
 
-	size_t batch_count = 0;
+	counter.current_batch = 0;
 
 	while (true) {
+
+#	if defined(BENCHMARK_CONCURRENT_LOAD)
 		
-		if (streaming_max_batches > 0) {
-			if ((int) batch_count >= streaming_max_batches) break;
+		if (counter.max_batches > 0) {
+			if (counter.current_batch > counter.max_batches) break;
 		}
 
-		if (print_progress && verbose) {
-			fprintf(stderr, "\r%5lu: Loading...", batch_count+1);
+
+		// Initial load
+
+		if (counter.current_batch == 0) {
+			
+			counter.print_before_batch();
+			if (!load_batch_via_writable_graph(graph, combined_data_source,
+						loader_config, streaming_batch, streaming_window,
+						stats)) break;
+			counter.current_batch++;
+			counter.print_after_batch_load(stats);
 		}
 
-		t_load_start = ll_get_time_ms();
 
-		bool loaded = combined_data_source.pull(&graph, streaming_batch);
+		// The concurrent sections
+
+		// TODO Move CP and delete to the task execution section
+
+		volatile bool loaded = false;
+		ll_mlcsr_ro_graph G_ro(&G);
+
+		counter.print_before_batch();
+
+#		pragma omp parallel sections
+		{
+
+			// The load section
+
+#			pragma omp section
+			{
+				omp_set_num_threads(concurrent_load_threads);
+
+				// TODO Check if this does the right thing
+				//      for concurrent_load_threads != 1
+
+				if (counter.current_batch < counter.max_batches
+						|| counter.max_batches <= 0) {
+					loaded = load_batch_via_writable_graph(graph,
+							combined_data_source, loader_config,
+							streaming_batch, streaming_window, stats);
+				}
+			}
+
+
+			// The task execution section
+
+#			pragma omp section
+			{
+				omp_set_num_threads(concurrent_task_threads);
+
+				for (counter.current_iteration = 0;
+						counter.current_iteration < counter.benchmark_count;
+						counter.current_iteration++) {
+
+					counter.print_before_benchmark();
+					return_d = run_benchmark(G_ro, benchmark, stats);
+					counter.print_after_benchmark(stats);
+				}
+			}
+		}
+
+		counter.current_batch++;
 		if (!loaded) break;
 
-		double t_load_pull = ll_get_time_ms() - t_load_start;
+		counter.print_after_batch_load(stats);
 
-		graph.checkpoint(&loader_config);
 
-		double t_load_cp = ll_get_time_ms() - (t_load_pull + t_load_start);
-
-		if (graph.num_levels() >= (size_t) streaming_window) {
-			graph.set_min_level(graph.num_levels() - streaming_window);
-			if (graph.num_levels() >= (size_t) streaming_window + 2) {
-				graph.delete_level(graph.num_levels() - streaming_window - 2);
-			}
+#	else	/* !defined(BENCHMARK_CONCURRENT_LOAD) */
+		
+		if (counter.max_batches > 0) {
+			if (counter.current_batch >= counter.max_batches) break;
 		}
 
-		double t_load_delete = ll_get_time_ms()
-			- (t_load_cp + t_load_pull + t_load_start);
+		counter.print_before_batch();
+		if (!load_batch_via_writable_graph(graph, combined_data_source,
+				loader_config, streaming_batch, streaming_window,
+				stats)) break;
+		counter.current_batch++;
+		counter.print_after_batch_load(stats);
 
-		double last_load_time = ll_get_time_ms() - t_load_start;
-		load_time += last_load_time;
-		load_count++;
-		batch_count++;
+		for (counter.current_iteration = 0;
+				counter.current_iteration < counter.benchmark_count;
+				counter.current_iteration++) {
 
-		if (print_progress && verbose) {
-			fprintf(stderr, "\r%5lu:           \b\b\b\b\b\b\b\b\b\b",
-					batch_count);
-		}
-	
-#endif
-
-		for (int c = 0; c < count; c++) {
-
-			if (print_progress) {
-				if (verbose) {
-#ifdef LL_STREAMING
-					if (count > 1)
-						fprintf(stderr, "\r%5lu - %2d/%d: ",
-								batch_count, c+1, count);
-					else
-						fprintf(stderr, "\r%5lu: ", batch_count);
-#else
-					fprintf(stderr, "\r%3d/%d: ", c+1, count);
-#endif
-				}
-				else {
-					fprintf(stderr, ".");
-					if ((c + 1) % 10 == 0) {
-						fprintf(stderr, "%d", c+1);
-					}
-				}
-			}
-
-			benchmark->initialize();
-
-#if defined(__linux__)
-			struct io_stat io_start;
-			getiostat(&io_start);
-#endif
-			struct rusage r_start;
-			getrusage(RUSAGE_SELF, &r_start);
-			double t_start = ll_get_time_ms();
-
-			return_d = benchmark->run();
-
-			double t = ll_get_time_ms() - t_start;
-			struct rusage r_end;
-			getrusage(RUSAGE_SELF, &r_end);
-#if defined(__linux__)
-			struct io_stat io_end;
-			getiostat(&io_end);
-#endif
-
-			runtimes.push_back(t);
-			cpu_times.push_back(ll_timeval_to_ms(r_end.ru_utime)
-					+ ll_timeval_to_ms(r_end.ru_stime)
-					- ll_timeval_to_ms(r_start.ru_utime)
-					- ll_timeval_to_ms(r_start.ru_stime));
-			cpu_user_times.push_back(ll_timeval_to_ms(r_end.ru_utime)
-					- ll_timeval_to_ms(r_start.ru_utime));
-			cpu_sys_times.push_back(ll_timeval_to_ms(r_end.ru_stime)
-					- ll_timeval_to_ms(r_start.ru_stime));
-			cpu_util.push_back((cpu_times[cpu_times.size()-1]
-						/ omp_get_max_threads()) / t);
-			major_faults.push_back(r_end.ru_majflt - r_start.ru_majflt);
-			in_blocks.push_back(r_end.ru_inblock - r_start.ru_inblock);
-			out_blocks.push_back(r_end.ru_oublock - r_start.ru_oublock);
-
-#if defined(__linux__)
-			io_rchar.push_back(io_end.io_rchar - io_start.io_rchar);
-			io_wchar.push_back(io_end.io_wchar - io_start.io_wchar);
-			io_syscr.push_back(io_end.io_syscr - io_start.io_syscr);
-			io_syscw.push_back(io_end.io_syscw - io_start.io_syscw);
-			io_read_bytes.push_back(io_end.io_read_bytes
-					- io_start.io_read_bytes);
-			io_write_bytes.push_back(io_end.io_write_bytes
-					- io_start.io_write_bytes);
-			io_cancelled_write_bytes.push_back(
-					io_end.io_cancelled_write_bytes
-					- io_start.io_cancelled_write_bytes);
-#endif
-
-			double r_d_adj = benchmark->finalize();
-			if (!std::isnan(r_d_adj)) return_d = r_d_adj;
-
-			if (print_progress && verbose) {
-#ifdef LL_STREAMING
-				if (c == 0) {
-					print_time(stderr, "Load: ", last_load_time, false);
-					fprintf(stderr, " (%0.3lf pull, %0.3lf cp, %0.3lf delete)",
-							t_load_pull/1000.0, t_load_cp/1000.0,
-							t_load_delete/1000.0);
-					print_time(stderr, ", Run: ", t);
-				}
-				else {
-					print_time(stderr, "Run: ", t);
-				}
-#else
-				print_time(stderr, "", t);
-#endif
-			}
-
-			//mem_out_edges = graph.ro_graph().o().in_memory_size();
+			counter.print_before_benchmark();
+			return_d = run_benchmark(G, benchmark, stats);
+			counter.print_after_benchmark(stats);
 		}
 
-#ifdef LL_STREAMING
+#	endif
+
 	}
+
+#else /* if !defined(LL_STREAMING) */
+
+#	if defined(BENCHMARK_CONCURRENT_LOAD)
+#		error "Not implemented"
+#	else
+
+	for (counter.current_iteration = 0;
+			counter.current_iteration < counter.benchmark_count;
+			counter.current_iteration++) {
+
+		counter.print_before_benchmark();
+		return_d = run_benchmark(G, benchmark, stats);
+		counter.print_after_benchmark(stats);
+	}
+
+#	endif
 #endif
 
-	if (print_progress && !verbose) {
-		fprintf(stderr, "\n");
-	}
+	counter.print_at_end();
 
 #if defined(LL_SLCSR)
 	const char* type = "slcsr";
@@ -1270,6 +1908,10 @@ int main(int argc, char** argv)
 #endif
 
 	std::string configuration_summary = type;
+
+#ifdef BENCHMARK_CONCURRENT_LOAD
+	configuration_summary += "_conc";
+#endif
 
 #if defined(LL_ONE_VT)
 	configuration_summary += "_onevt";
@@ -1310,115 +1952,7 @@ int main(int argc, char** argv)
 	//printf("# Edges    : %lu\n\n", (size_t) graph.max_edges());
 	printf("# Levels   : %lu\n", (size_t) G.num_levels());
 
-	printf("Memory     : %0.2lf MB\n", (maxrss_loaded - maxrss_start) / 1024.0);
-	//printf("Out Edges  : %0.2lf MB\n", mem_out_edges / 1024.0 / 1024.0);
-
-	if (load_count > 0) {
-#ifdef LL_STREAMING
-		print_time(stdout, "Load Time  : ",
-				load_time / (double) load_count, false);
-		print_time(stdout, " each, ", load_time, false);
-		fprintf(stdout, " total\n");
-#else
-		print_time(stdout, "Load Time  : ", load_time / (double) load_count);
-#endif
-	}
-
-	double runtime_total = 0;
-	double runtime_mean = 0;
-	double runtime_stdev = 0;
-	double runtime_min = 0;
-	double runtime_max = 0;
-	double runtime_c95 = 0;
-
-	for (size_t i = 0; i < runtimes.size(); i++) {
-		runtime_total += runtimes[i];
-	}
-
-	if (runtimes.size() > 0) {
-		if (runtimes.size() == 1) {
-
-			fprintf(stdout, "\nTIME\n");
-			print_time(stdout, "Time       : ", runtime_total);
-			runtime_mean = runtime_total;
-			runtime_min = runtime_total;
-			runtime_max = runtime_total;
-			print_time(stdout, "User Time  : ", ll_sum(cpu_user_times));
-			print_time(stdout, "System Time: ", ll_sum(cpu_sys_times));
-			print_time(stdout, "CPU Time   : ", ll_sum(cpu_times));
-			fprintf(stdout, "CPU Util.  : %0.2lf%%\n", 100*ll_mean(cpu_util));
-
-			fprintf(stdout, "\nRESOURCE USAGE\n");
-			fprintf(stdout, "Mjr Faults : %ld\n", ll_sum(major_faults));
-			fprintf(stdout, "In Blocks  : %ld\n", ll_sum(in_blocks));
-			fprintf(stdout, "Out Blocks : %ld\n", ll_sum(out_blocks));
-#if defined(__linux__)
-			fprintf(stdout, "In Bytes   : %ld (%0.2lf GB)\n",
-					ll_sum(io_read_bytes),
-					ll_sum(io_read_bytes) / (1024.0*1024.0*1024.0));
-			fprintf(stdout, "Out Bytes  : %ld (%0.2lf GB)\n",
-					ll_sum(io_write_bytes),
-					ll_sum(io_write_bytes) / (1024.0*1024.0*1024.0));
-#endif
-		}
-		else {
-			double x = 0;
-			runtime_mean = runtime_total / (double) runtimes.size();
-			runtime_min = runtimes[0];
-			runtime_max = runtimes[0];
-			for (size_t i = 0; i < runtimes.size(); i++) {
-				x += (runtimes[i]-runtime_mean) * (runtimes[i]-runtime_mean);
-				if (runtimes[i] < runtime_min) runtime_min = runtimes[i];
-				if (runtimes[i] > runtime_max) runtime_max = runtimes[i];
-			}
-			runtime_stdev = sqrt(x / runtimes.size());
-			runtime_c95 = /* Z_(0.96/2) */ 1.96 * runtime_stdev
-				/ sqrt((double) runtimes.size());
-			fprintf(stdout, "\nTIME\n");
-#ifdef LL_STREAMING
-			print_time_and_confidence(stdout, "Time       : ",
-					runtime_mean, runtime_c95, false);
-			print_time(stdout, " each, ", runtime_total, false);
-			fprintf(stdout, " total\n");
-#else
-			print_time_and_confidence(stdout, "Time       : ",
-					runtime_mean, runtime_c95);
-#endif
-			print_time_and_confidence(stdout, "User Time  : ",
-					ll_mean(cpu_user_times), ll_c95(cpu_user_times));
-			print_time_and_confidence(stdout, "System Time: ",
-					ll_mean(cpu_sys_times), ll_c95(cpu_sys_times));
-			print_time_and_confidence(stdout, "CPU Time   : ",
-					ll_mean(cpu_times), ll_c95(cpu_times));
-			fprintf(stdout, "CPU Util.  : %0.2lf +- %0.2lf%%\n",
-					100*ll_mean(cpu_util), 100*ll_c95(cpu_util));
-
-			fprintf(stdout, "\nRESOURCE USAGE\n");
-			fprintf(stdout, "Mjr Faults : %0.2lf +- %0.2lf\n",
-					ll_mean(major_faults), ll_c95(major_faults));
-			fprintf(stdout, "In Blocks  : %0.2lf +- %0.2lf\n",
-					ll_mean(in_blocks), ll_c95(in_blocks));
-			fprintf(stdout, "Out Blocks : %0.2lf +- %0.2lf\n",
-					ll_mean(out_blocks), ll_c95(out_blocks));
-#if defined(__linux__)
-			fprintf(stdout, "In Bytes   : %0.2lf +- %0.2lf "
-					"(%0.2lf +- %0.2lf GB)\n",
-					ll_mean(io_read_bytes),
-					ll_c95(io_read_bytes),
-					ll_mean(io_read_bytes) / (1024.0*1024.0*1024.0),
-					ll_c95(io_read_bytes) / (1024.0*1024.0*1024.0));
-			fprintf(stdout, "Out Butes  : %0.2lf +- %0.2lf "
-					"(%0.2lf +- %0.2lf GB)\n",
-					ll_mean(io_write_bytes),
-					ll_c95(io_write_bytes),
-					ll_mean(io_write_bytes) / (1024.0*1024.0*1024.0),
-					ll_c95(io_write_bytes) / (1024.0*1024.0*1024.0));
-#endif
-		}
-	}
-	printf("\n");
-
-	fflush(stdout);
+	stats.print_stats(stdout);
 
 #ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
 	printf("Edge weights:\n");
@@ -1434,114 +1968,7 @@ int main(int argc, char** argv)
 	// Save the execution statistics
 	
 	if (benchmark != NULL && save_execution_statistics) {
-
-		// Generate the file name
-
-		char date_time[64];
-		snprintf(date_time, 64, "%04d%02d%02d-%02d%02d%02d",
-				tm_start_time.tm_year + 1900, tm_start_time.tm_mon + 1,
-				tm_start_time.tm_mday, tm_start_time.tm_hour,
-				tm_start_time.tm_min, tm_start_time.tm_sec);
-
-		std::string file_name = configuration_summary;
-		file_name += "__";
-		file_name += run->rt_identifier;
-		file_name += "__";
-		file_name += date_time;
-		file_name += ".csv";
-
-
-		// Open the file
-
-		FILE* f = fopen(file_name.c_str(), "w");
-		if (f == NULL) {
-			perror("fopen");
-			abort();
-		}
-
-
-		// Write the meta-data
-
-		std::ostringstream header;
-		std::ostringstream data;
-
-		data << std::setprecision(6) << std::fixed;
-
-		header << "representation,specialized";
-		data << configuration_summary;
-#if BENCHMARK_TASK_ID >= 0
-		data << ",true";
-#else
-		data << ",false";
-#endif
-
-		header << ",year,month,day,hour,min,sec";
-		data << "," << tm_start_time.tm_year + 1900;
-		data << "," << tm_start_time.tm_mon + 1;
-		data << "," << tm_start_time.tm_mday;
-		data << "," << tm_start_time.tm_hour;
-		data << "," << tm_start_time.tm_min;
-		data << "," << tm_start_time.tm_sec;
-
-		header << ",load_time";
-		if (load_count == 0) data << ",0";
-		else data << "," << load_time/load_count;
-
-		header << ",graph_max_nodes,graph_levels";
-		data << graph.max_nodes();
-		data << G.num_levels();
-
-		fprintf(f, "%s\n%s\n\n", header.str().c_str(), data.str().c_str());
-
-
-		// Write the summary results
-
-		header.str("");
-		data.str("");
-
-		header << "name";
-		data << run->rt_identifier;
-
-		header << ",runtime_ms,stdev_ms,min_ms,max_ms,c95_ms";
-		data << "," << runtime_mean;
-		data << "," << runtime_stdev;
-		data << "," << runtime_min;
-		data << "," << runtime_max;
-		data << "," << runtime_c95;
-
-		header << ",cpu_ms,cpu_util,major_faults,in_blocks,out_blocks";
-		data << "," << ll_mean(cpu_times);
-		data << "," << ll_mean(cpu_util);
-		data << "," << ll_mean(major_faults);
-		data << "," << ll_mean(in_blocks);
-		data << "," << ll_mean(out_blocks);
-
-		fprintf(f, "%s\n%s\n\n", header.str().c_str(), data.str().c_str());
-
-
-		// Write the individual operations
-
-		header.str("");
-		header << "id,runtime_ms,cpu_ms,cpu_util";
-		header << ",major_faults,in_blocks,out_blocks";
-
-		fprintf(f, "%s\n", header.str().c_str());
-
-		for (size_t i = 0; i < runtimes.size(); i++) {
-			data.str("");
-			data << i << "," << runtimes[i];
-			data << "," << cpu_times[i];
-			data << "," << cpu_util[i];
-			data << "," << major_faults[i];
-			data << "," << in_blocks[i];
-			data << "," << out_blocks[i];
-			fprintf(f, "%s\n", data.str().c_str());
-		}
-
-
-		// Close
-
-		fclose(f);
+		stats.save_stats(G, configuration_summary.c_str(), run->rt_identifier);
 	}
 
 

@@ -58,19 +58,17 @@ class ll_b_pagerank_pull_ext : public ll_benchmark<Graph> {
 
 	value_t d;
 	int32_t max;
+
 	value_t* G_pg_rank;
-	size_t pg_rank_length;
 
 
 public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_pagerank_pull_ext(Graph& graph, int32_t max, value_t d=0.85)
-		: ll_benchmark<Graph>(graph,
+	ll_b_pagerank_pull_ext(int32_t max, value_t d=0.85)
+		: ll_benchmark<Graph>(
 				/* assuming that value_t is either a float or a double */
 				sizeof(value_t) == sizeof(float)
 					? "PageRank<float> - Pull"
@@ -81,9 +79,7 @@ public:
 		this->d = d;
 		this->max = max;
 
-		size_t max_nodes = graph.max_nodes() + 1024;
-		pg_rank_length = max_nodes;
-		G_pg_rank = (value_t*) malloc(sizeof(value_t) * max_nodes);
+		this->create_auto_array_for_nodes(G_pg_rank);
 	}
 
 
@@ -91,21 +87,6 @@ public:
 	 * Destroy the benchmark
 	 */
 	virtual ~ll_b_pagerank_pull_ext(void) {
-		if (G_pg_rank != NULL) free(G_pg_rank);
-	}
-
-
-	/**
-	 * Initialize the benchmark
-	 */
-	virtual void initialize(void) {
-
-		size_t max_nodes = this->_graph.max_nodes();
-		if (G_pg_rank == NULL || max_nodes > pg_rank_length) {
-			free(G_pg_rank);
-			pg_rank_length = max_nodes + 1024;
-			G_pg_rank = (value_t*) malloc(sizeof(value_t) * pg_rank_length);
-		}
 	}
 
 
@@ -116,7 +97,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		ll_memory_helper m;
 
 		value_t diff = 0.0 ;
@@ -210,7 +191,7 @@ public:
 		value_t s  = 0;
 		value_t s2 = 0;
 		size_t c  = 0;
-		for (node_t n = 0; n < this->_graph.max_nodes(); n++) {
+		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
 			s  += G_pg_rank[n];
 			s2 += G_pg_rank[n] * G_pg_rank[n];
 			c++;
@@ -238,19 +219,17 @@ class ll_b_pagerank_push_ext : public ll_benchmark<Graph> {
 
 	value_t d;
 	int32_t max;
+
 	value_t* G_pg_rank;
-	size_t pg_rank_length;
 
 
 public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_pagerank_push_ext(Graph& graph, int32_t max, value_t d=0.85)
-		: ll_benchmark<Graph>(graph,
+	ll_b_pagerank_push_ext(int32_t max, value_t d=0.85)
+		: ll_benchmark<Graph>(
 				/* assuming that value_t is either a float or a double */
 				sizeof(value_t) == sizeof(float)
 					? "PageRank<float> - Push"
@@ -261,9 +240,7 @@ public:
 		this->d = d;
 		this->max = max;
 
-		size_t max_nodes = graph.max_nodes() + 1024;
-		pg_rank_length = max_nodes;
-		G_pg_rank = (value_t*) malloc(sizeof(value_t) * max_nodes);
+		this->create_auto_array_for_nodes(G_pg_rank);
 	}
 
 
@@ -271,21 +248,6 @@ public:
 	 * Destroy the benchmark
 	 */
 	virtual ~ll_b_pagerank_push_ext(void) {
-		if (G_pg_rank != NULL) free(G_pg_rank);
-	}
-
-
-	/**
-	 * Initialize the benchmark
-	 */
-	virtual void initialize(void) {
-
-		size_t max_nodes = this->_graph.max_nodes();
-		if (G_pg_rank == NULL || max_nodes > pg_rank_length) {
-			free(G_pg_rank);
-			pg_rank_length = max_nodes + 1024;
-			G_pg_rank = (value_t*) malloc(sizeof(value_t) * pg_rank_length);
-		}
 	}
 
 
@@ -296,7 +258,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		ll_memory_helper m;
 
 		int32_t cnt = 0 ;
@@ -378,7 +340,7 @@ public:
 		value_t s  = 0;
 		value_t s2 = 0;
 		size_t c  = 0;
-		for (node_t n = 0; n < this->_graph.max_nodes(); n++) {
+		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
 			s  += G_pg_rank[n];
 			s2 += G_pg_rank[n] * G_pg_rank[n];
 			c++;
@@ -414,11 +376,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_pagerank_pull_float(Graph& graph, int32_t max, float d=0.85)
-		: ll_b_pagerank_pull_ext<Graph, float>(graph, max, d) {}
+	ll_b_pagerank_pull_float(int32_t max, float d=0.85)
+		: ll_b_pagerank_pull_ext<Graph, float>(max, d) {}
 };
 
 
@@ -433,11 +393,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_pagerank_push_float(Graph& graph, int32_t max, float d=0.85)
-		: ll_b_pagerank_push_ext<Graph, float>(graph, max, d) {}
+	ll_b_pagerank_push_float(int32_t max, float d=0.85)
+		: ll_b_pagerank_push_ext<Graph, float>(max, d) {}
 };
 
 
@@ -452,11 +410,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_pagerank_pull_double(Graph& graph, int32_t max, double d=0.85)
-		: ll_b_pagerank_pull_ext<Graph, double>(graph, max, d) {}
+	ll_b_pagerank_pull_double(int32_t max, double d=0.85)
+		: ll_b_pagerank_pull_ext<Graph, double>(max, d) {}
 };
 
 
@@ -471,11 +427,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_pagerank_push_double(Graph& graph, int32_t max, double d=0.85)
-		: ll_b_pagerank_push_ext<Graph, double>(graph, max, d) {}
+	ll_b_pagerank_push_double(int32_t max, double d=0.85)
+		: ll_b_pagerank_push_ext<Graph, double>(max, d) {}
 };
 
 #endif

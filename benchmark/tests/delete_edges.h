@@ -61,10 +61,8 @@ public:
 
 	/**
 	 * Create the test
-	 *
-	 * @param graph the graph
 	 */
-	ll_t_delete_edges(Graph& graph) : ll_benchmark<Graph>(graph, "[Test] Delete Edges") {
+	ll_t_delete_edges() : ll_benchmark<Graph>("[Test] Delete Edges") {
 	}
 
 
@@ -82,7 +80,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 
 		printf("\nDELETE EDGES TEST START\n");
 		printf(" * Delete: "); fflush(stdout);

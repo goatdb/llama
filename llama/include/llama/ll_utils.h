@@ -224,6 +224,40 @@ inline double ll_c95(std::vector<T>& v) {
 
 
 /**
+ * Get the minimum
+ *
+ * @param v the vector
+ * @return the minimum
+ */
+template<typename T>
+inline T ll_min(std::vector<T>& v) {
+	if (v.empty()) return 0;
+	T m = v[0];
+	for (size_t i = 1; i < v.size(); i++) {
+		if (v[i] < m) m = v[i];
+	}
+	return m;
+}
+
+
+/**
+ * Get the maximum
+ *
+ * @param v the vector
+ * @return the maximum
+ */
+template<typename T>
+inline T ll_max(std::vector<T>& v) {
+	if (v.empty()) return 0;
+	T m = v[0];
+	for (size_t i = 1; i < v.size(); i++) {
+		if (v[i] > m) m = v[i];
+	}
+	return m;
+}
+
+
+/**
  * Get the file extension
  *
  * @param file_name the file name

@@ -62,11 +62,8 @@ public:
 
 	/**
 	 * Create the tool
-	 *
-	 * @param graph the graph
 	 */
-	ll_t_dump(Graph& graph)
-		: ll_benchmark<Graph>(graph, "[Tool] Dump") {
+	ll_t_dump() : ll_benchmark<Graph>("[Tool] Dump") {
 		_out = stdout;
 	}
 
@@ -85,7 +82,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 		size_t max_nodes = G.max_nodes();
 		bool reverse = G.has_reverse_edges();
 
@@ -93,14 +90,14 @@ public:
 
 		fprintf(_out, "Out-edges\n");
 		for (size_t n = 0; n < max_nodes; n++) {
-			fprintf(_out, "%5lu:", n);
+			fprintf(_out, "%5ld:", n);
 
 			ll_edge_iterator iter;
 			G.out_iter_begin(iter, n);
 			for (edge_t v_idx = G.out_iter_next(iter);
 					v_idx != LL_NIL_EDGE;
 					v_idx = G.out_iter_next(iter)) {
-				fprintf(_out, "\t%lld", (long long) iter.last_node);
+				fprintf(_out, "\t%ld", iter.last_node);
 			}
 			fprintf(_out, "\n");
 		}
@@ -108,14 +105,14 @@ public:
 		if (reverse) {
 			fprintf(_out, "\nIn-edges\n");
 			for (size_t n = 0; n < max_nodes; n++) {
-				fprintf(_out, "%5lu:", n);
+				fprintf(_out, "%5ld:", n);
 
 				ll_edge_iterator iter;
 				G.inm_iter_begin(iter, n);
 				for (node_t v = G.inm_iter_next(iter);
 						v != LL_NIL_NODE;
 						v = G.inm_iter_next(iter)) {
-					fprintf(_out, "\t%lld", (long long) v);
+					fprintf(_out, "\t%ld", v);
 				}
 				fprintf(_out, "\n");
 			}

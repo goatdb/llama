@@ -63,11 +63,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_triangle_counting_org(Graph& graph)
-		: ll_benchmark<Graph>(graph, "Triangle Counting") {
+	ll_b_triangle_counting_org()
+		: ll_benchmark<Graph>("Triangle Counting") {
 	}
 
 
@@ -85,7 +83,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
 
 		int64_t T = 0 ;
 		int64_t num_k_processed = 0 ;
@@ -163,23 +161,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_triangle_counting_LI(Graph& graph)
-		: ll_benchmark<Graph>(graph, "Triangle Counting") {
-
-		// TODO Enforce that the adjacency lists are sorted
-
-		if (graph.num_levels() != 1) {
-			fprintf(stderr, "The graph must have exactly 1 level\n");
-			abort();
-		}
-
-		if (!graph.has_reverse_edges()) {
-			fprintf(stderr, "The graph must have reverse edges\n");
-			abort();
-		}
+	ll_b_triangle_counting_LI()
+		: ll_benchmark<Graph>("Triangle Counting") {
 	}
 
 
@@ -279,7 +263,19 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
+
+		// TODO Enforce that the adjacency lists are sorted
+
+		if (G.num_levels() != 1) {
+			fprintf(stderr, "The graph must have exactly 1 level\n");
+			abort();
+		}
+
+		if (!G.has_reverse_edges()) {
+			fprintf(stderr, "The graph must have reverse edges\n");
+			abort();
+		}
 
 		int64_t T = 0 ;
 		int64_t num_k_processed = 0 ;
@@ -354,18 +350,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_triangle_counting_LU(Graph& graph)
-		: ll_benchmark<Graph>(graph, "Triangle Counting") {
-
-		// TODO Enforce that the adjacency lists are sorted
-
-		if (graph.num_levels() != 1) {
-			fprintf(stderr, "The graph must have exactly 1 level\n");
-			abort();
-		}
+	ll_b_triangle_counting_LU()
+		: ll_benchmark<Graph>("Triangle Counting") {
 	}
 
 
@@ -428,7 +415,14 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
+
+		// TODO Enforce that the adjacency lists are sorted
+
+		if (G.num_levels() != 1) {
+			fprintf(stderr, "The graph must have exactly 1 level\n");
+			abort();
+		}
 
 		int64_t T = 0 ;
 		int64_t num_k_processed = 0 ;
@@ -587,18 +581,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_triangle_counting_LOD_org(Graph& graph)
-		: ll_benchmark<Graph>(graph, "Triangle Counting") {
-
-		// TODO Enforce that the adjacency lists are sorted
-
-		if (graph.num_levels() != 1) {
-			fprintf(stderr, "The graph must have exactly 1 level\n");
-			abort();
-		}
+	ll_b_triangle_counting_LOD_org()
+		: ll_benchmark<Graph>("Triangle Counting") {
 	}
 
 
@@ -616,7 +601,14 @@ public:
 	 */
 	virtual double run(void) {
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
+
+		// TODO Enforce that the adjacency lists are sorted
+
+		if (G.num_levels() != 1) {
+			fprintf(stderr, "The graph must have exactly 1 level\n");
+			abort();
+		}
 
 		int64_t T = 0 ;
 		int64_t num_k_processed = 0 ;
@@ -697,16 +689,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_triangle_counting_LOD(Graph& graph)
-		: ll_benchmark<Graph>(graph, "Triangle Counting") {
-
-		if (graph.num_levels() != 1) {
-			fprintf(stderr, "The graph must have exactly 1 level\n");
-			abort();
-		}
+	ll_b_triangle_counting_LOD()
+		: ll_benchmark<Graph>("Triangle Counting") {
 	}
 
 
@@ -727,7 +712,13 @@ public:
 		// XXX This does not work with slcsr, as the ptr is not used by the
 		// iterator
 
-		Graph& G = this->_graph;
+		Graph& G = *this->_graph;
+
+		if (G.num_levels() != 1) {
+			fprintf(stderr, "The graph must have exactly 1 level\n");
+			abort();
+		}
+
 		auto* et = G.out().edge_table(); (void) et;
 		ll_tc_node_pair_comparator node_pair_comparator;
 
@@ -852,11 +843,9 @@ public:
 
 	/**
 	 * Create the benchmark
-	 *
-	 * @param graph the graph
 	 */
-	ll_b_triangle_counting_LOD(ll_writable_graph& graph)
-		: ll_benchmark<ll_writable_graph>(graph, "Triangle Counting") {
+	ll_b_triangle_counting_LOD()
+		: ll_benchmark<ll_writable_graph>("Triangle Counting") {
 		LL_NOT_IMPLEMENTED;
 	}
 

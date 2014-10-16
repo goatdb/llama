@@ -97,10 +97,8 @@ public:
 
 	/**
 	 * Create the tool
-	 *
-	 * @param graph the graph
 	 */
-	ll_t_level_spread(Graph& graph) : ll_benchmark<Graph>(graph, "[Tool] Level Spread") {
+	ll_t_level_spread() : ll_benchmark<Graph>("[Tool] Level Spread") {
 	}
 
 
@@ -118,7 +116,7 @@ public:
 	 */
 	virtual double run(void) {
 
-		level_spread(this->_graph, R_level_spread, R_degree_sum);
+		level_spread(*this->_graph, R_level_spread, R_degree_sum);
 
         return NAN;
     }
