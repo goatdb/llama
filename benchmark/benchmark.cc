@@ -315,7 +315,9 @@ private:
 
 	// Benchmark stats
 	
+#if defined(__linux__)
 	struct io_stat _b_io_start;
+#endif
 	struct rusage _b_ru_start;
 	double _b_t_start;
 

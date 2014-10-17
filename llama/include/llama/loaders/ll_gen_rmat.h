@@ -239,7 +239,7 @@ private:
 
 			_noise = true;
 
-			_nodes = powl(2, _scale);
+			_nodes = (size_t) (0.1 + pow(2, _scale));
 			_edges = (size_t) (0.1 + round(_degree * _nodes));
 
 			LL_D_PRINT("Nodes = %lu, edges = %lu\n", _nodes, _edges);
