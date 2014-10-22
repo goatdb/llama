@@ -50,6 +50,8 @@
 #include "llama/ll_writable_graph.h"
 #include "benchmarks/benchmark.h"
 
+#define LL_SSSP_RETURNS_MAX
+
 
 /**
  * Weighted SSSP
@@ -187,11 +189,19 @@ public:
 	 * @return the updated numerical result, if applicable
 	 */
 	virtual double finalize(void) {
-		WeightType max = 0;
+		size_t count = 0;
+		int32_t max = 0;
 		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
-			if (G_dist[n] > max) max = G_dist[n];
+			if (G_dist[n] < INT_MAX-1) {
+				count++;
+				if (G_dist[n] > max) max = G_dist[n];
+			}
 		}
+#ifdef LL_SSSP_RETURNS_MAX
 		return max;
+#else
+		return count;
+#endif
 	}
 
 
@@ -296,11 +306,19 @@ public:
 	 * @return the updated numerical result, if applicable
 	 */
 	virtual double finalize(void) {
-		int32_t max  = 0;
+		size_t count = 0;
+		int32_t max = 0;
 		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
-			if (G_dist[n] > max) max = G_dist[n];
+			if (G_dist[n] < INT_MAX-1) {
+				count++;
+				if (G_dist[n] > max) max = G_dist[n];
+			}
 		}
+#ifdef LL_SSSP_RETURNS_MAX
 		return max;
+#else
+		return count;
+#endif
 	}
 
 
@@ -437,11 +455,19 @@ public:
 	 * @return the updated numerical result, if applicable
 	 */
 	virtual double finalize(void) {
-		int32_t max  = 0;
+		size_t count = 0;
+		int32_t max = 0;
 		for (node_t n = 0; n < this->_graph->max_nodes(); n++) {
-			if (G_dist[n] > max) max = G_dist[n];
+			if (G_dist[n] < INT_MAX-1) {
+				count++;
+				if (G_dist[n] > max) max = G_dist[n];
+			}
 		}
+#ifdef LL_SSSP_RETURNS_MAX
 		return max;
+#else
+		return count;
+#endif
 	}
 
 

@@ -33,7 +33,6 @@
  * SUCH DAMAGE.
  */
 
-
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -1838,6 +1837,10 @@ int main(int argc, char** argv)
 						counter.current_iteration < counter.benchmark_count;
 						counter.current_iteration++) {
 
+#ifdef LL_COUNTERS
+					ll_clear_counters();
+#endif
+
 					counter.print_before_benchmark();
 					return_d = run_benchmark(G_ro, benchmark, stats);
 					counter.print_after_benchmark(stats);
@@ -1868,6 +1871,10 @@ int main(int argc, char** argv)
 				counter.current_iteration < counter.benchmark_count;
 				counter.current_iteration++) {
 
+#ifdef LL_COUNTERS
+			ll_clear_counters();
+#endif
+
 			counter.print_before_benchmark();
 			return_d = run_benchmark(G, benchmark, stats);
 			counter.print_after_benchmark(stats);
@@ -1886,6 +1893,10 @@ int main(int argc, char** argv)
 	for (counter.current_iteration = 0;
 			counter.current_iteration < counter.benchmark_count;
 			counter.current_iteration++) {
+
+#ifdef LL_COUNTERS
+		ll_clear_counters();
+#endif
 
 		counter.print_before_benchmark();
 		return_d = run_benchmark(G, benchmark, stats);
@@ -1999,6 +2010,11 @@ int main(int argc, char** argv)
 	if (!std::isnan((double) return_d)) {
 		printf("Return value: %lf\n", return_d);
 	}
+
+#ifdef LL_COUNTERS
+	fprintf(stderr, "\nCounters:\n");
+	ll_print_counters();
+#endif
 
 	if (benchmark != NULL) delete benchmark;
 

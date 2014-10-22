@@ -296,13 +296,16 @@ public:
 	 * Create a read-only clone of ll_mlcsr_ro_graph
 	 *
 	 * @param master the master object
-	 * @param level the max level
+	 * @param level the max level (use -1 for latest)
 	 */
-	ll_mlcsr_ro_graph(ll_mlcsr_ro_graph* master, int level)
-		: _out(&master->_out, level), _in(&master->_in, level)
+	ll_mlcsr_ro_graph(ll_mlcsr_ro_graph* master, int level=-1)
+		: _out(&master->_out, level < 0 ? master->max_level() : level),
+		  _in (&master->_in , level < 0 ? master->max_level() : level)
 	{
-		_master = master;
+		if (level < 0) level = master->max_level();
+		assert(level >= 0);
 
+		_master = master;
 		_database = master->_database;
 
 		_csrs[_out.name()] = & _out;
@@ -582,6 +585,16 @@ public:
 	 */
     inline edge_t max_edges(int level) const {
         return _out.max_edges(level);
+    }
+
+
+	/**
+	 * Return the max level
+	 *
+	 * @return the max level, or -1 if none
+	 */
+	inline int max_level() const {
+        return ((int) num_levels()) - 1;
     }
 
 

@@ -50,6 +50,39 @@
 
 
 //==========================================================================//
+// Counters                                                                 //
+//==========================================================================//
+
+#ifdef LL_COUNTERS
+std::atomic<size_t> g_iter_begin;
+std::atomic<size_t> g_iter_descend;
+std::atomic<size_t> g_iter_next;
+
+/**
+ * Clear the counters
+ */
+void ll_clear_counters() {
+	g_iter_begin = 0;
+	g_iter_descend = 0;
+	g_iter_next = 0;
+}
+
+/**
+ * Print the counters
+ *
+ * @param f the output file
+ * @param sep the separator
+ */
+void ll_print_counters(FILE* f = stderr, const char* sep = ":\t") {
+	fprintf(f, "iter_begin%s%lu\n", sep, g_iter_begin.load());
+	fprintf(f, "iter_descend%s%lu\n", sep, g_iter_descend.load());
+	fprintf(f, "iter_next%s%lu\n", sep, g_iter_next.load());
+}
+#endif
+
+
+
+//==========================================================================//
 // The base class: ll_csr_base                                              //
 //==========================================================================//
 
@@ -1550,6 +1583,10 @@ public:
 	void iter_begin(ll_edge_iterator& iter, node_t n,
 			int level=-1, int max_level=-1) const {
 
+#ifdef LL_COUNTERS
+		g_iter_begin++;
+#endif
+
 #ifdef LL_CHECK_NODE_EXISTS_IN_RO
 #ifndef FORCE_L0
 		if (!this->node_exists(n)) {
@@ -1639,7 +1676,7 @@ private:
 	 *
 	 * @param iter the iterator
 	 */
-	void iter_descend(ll_edge_iterator& iter) const	{
+	void iter_descend(ll_edge_iterator& iter) const {
 
 		LL_D_NODE_PRINT(iter.node, "Descend\n");
 
@@ -1663,6 +1700,11 @@ private:
 			}
 			else {
 #endif
+
+#ifdef LL_COUNTERS
+				g_iter_descend++;
+#endif
+
 				iter.left = b.level_length;
 				//
 				// The previous level contains zeros instead of -1 for some nodes
@@ -1690,6 +1732,10 @@ public:
 	 * @return the next item, or LL_NIL_EDGE if none
 	 */
 	ITERATOR_DECL edge_t iter_next(ll_edge_iterator& iter) const {
+
+#ifdef LL_COUNTERS
+		g_iter_next++;
+#endif
 
 #ifdef D_DEBUG_NODE
 		T _v = 0;

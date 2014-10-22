@@ -685,6 +685,27 @@ public:
 		iter.move_to_end();
 		return iter;
 	}
+
+
+protected:
+
+	/**
+	 * Calculate the max number of elements in the edge table array
+	 *
+	 * @param level the level number
+	 * @param max_nodes the total number of nodes, cummulative up until this level
+	 * @param max_adj_lists the max number of adj. lists in the level
+	 * @param max_edges the number of edges within the level
+	 * @return the number of elements
+	 */
+	virtual size_t values_length(int level, size_t max_nodes,
+			size_t max_adj_lists, size_t max_edges) const {
+#if defined(LL_SLCSR_ALE_ET)
+		return max_edges + max_adj_lists;
+#else
+		return max_edges;
+#endif
+	}
 };
 
 #endif
