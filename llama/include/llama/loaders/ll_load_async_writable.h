@@ -103,6 +103,7 @@ class ll_la_request_queue {
 	
 	ll_la_request* volatile _head;
 	ll_la_request* volatile _tail;
+	volatile size_t _length;
 	
 	volatile bool _shutdown_when_empty;
 
@@ -124,6 +125,7 @@ public:
 		_lock = 0;
 		_head = NULL;
 		_tail = NULL;
+		_length = 0;
 
 		_shutdown_when_empty = false;
 	}
@@ -152,6 +154,8 @@ public:
 		request->_next = NULL;
 
 		ll_spinlock_acquire(&_lock);
+
+		_length++;
 	
 		if (_tail != NULL)
 			_tail->_next = request;
@@ -176,6 +180,8 @@ public:
 			return NULL;
 		}
 
+		_length--;
+
 		ll_la_request* r = (ll_la_request*) _head;
 		_head = r->_next;
 		if (_head == NULL) _tail = NULL;
@@ -183,6 +189,16 @@ public:
 		ll_spinlock_release(&_lock);
 
 		return r;
+	}
+
+
+	/**
+	 * Get the size of the queue
+	 *
+	 * @return the number of elements in the queue
+	 */
+	inline size_t size() const {
+		return _length;
 	}
 
 
@@ -230,6 +246,23 @@ public:
 				delete r;
 			}
 		}
+	}
+
+
+	/**
+	 * Process the next request
+	 *
+	 * @return true if the request was processed, false if the queue was empty
+	 */
+	bool process_next(ll_writable_graph& graph) {
+
+		ll_la_request* r = dequeue();
+		if (r == NULL) return false;
+
+		r->run(graph);
+		delete r;
+
+		return true;
 	}
 };
 
