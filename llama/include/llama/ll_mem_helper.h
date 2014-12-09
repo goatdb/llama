@@ -37,11 +37,15 @@
 #ifndef _LL_MEM_HELPER_H
 #define _LL_MEM_HELPER_H
 
+#include <cassert>
 #include <cstdlib>
 #include <vector>
 
 #include "llama/ll_lock.h"
 #include "llama/ll_utils.h"
+
+#define LL_MEM_POOL_ALIGN_BITS				3
+#define	LL_MEM_POOL_ALIGN					(1 << (LL_MEM_POOL_ALIGN_BITS))
 
 
 /**
@@ -92,6 +96,16 @@ public:
 
 
 	/**
+	 * Get the chunk size
+	 *
+	 * @return the chunk size in bytes
+	 */
+	inline size_t chunk_size() const {
+		return _chunk_size;
+	}
+
+
+	/**
 	 * Free the entire memory pool
 	 *
 	 * @param retain true to retain all allocated buffers (default)
@@ -116,12 +130,28 @@ public:
 
 
 	/**
+	 * Get a pointer to the given location within the buffer
+	 *
+	 * @param chunk the chunk number
+	 * @param offset the given offset
+	 * @return the pointer
+	 */
+	void* pointer(size_t chunk, size_t offset) {
+		assert(chunk <= _chunk_index && offset < _chunk_size);
+		return ((char*) _buffers[chunk]) + offset;
+	}
+
+
+	/**
 	 * Allocate memory
 	 *
 	 * @param num the number of elements
+	 * @param o_chunk the pointer to store the chunk number
+	 * @param o_offset the pointer to store the offset within the chunk
 	 * @return the allocated memory
 	 */
-	template<typename T> T* allocate(size_t num=1) {
+	template<typename T> T* allocate(size_t num=1, size_t* o_chunk=NULL,
+			size_t* o_offset=NULL) {
 		
 		size_t bytes = sizeof(T) * num;
 		ll_spinlock_acquire(&_lock);
@@ -144,6 +174,9 @@ public:
 		void* p = ((char*) _buffers[_chunk_index]) + _last_used;
 		_last_used += bytes;
 
+		size_t lu_remainder = _last_used & ((1ul << LL_MEM_POOL_ALIGN_BITS) - 1);
+		if (lu_remainder != 0) _last_used += LL_MEM_POOL_ALIGN - lu_remainder;
+
 		if (_last_used > _chunk_size) {
 			_chunk_index++;
 			if (_chunk_index < _buffers.size()) {
@@ -159,10 +192,165 @@ public:
 			}
 			_last_used = bytes;
 		}
+
+		if (o_chunk  != NULL) *o_chunk  = _chunk_index;
+		if (o_offset != NULL) *o_offset = _last_used - bytes;
 		
 		ll_spinlock_release(&_lock);
 
 		return (T*) p;
+	}
+};
+
+
+/**
+ * Memory pool for a small number of very large allocations of similar sizes
+ */
+class ll_memory_pool_for_large_allocations {
+
+	typedef struct {
+		size_t b_size;
+		volatile bool b_in_use;
+		void* b_buffer;
+	} buffer_t;
+
+	std::vector<buffer_t> _buffers;
+	ll_spinlock_t _lock;
+	double _overprovision;
+
+
+public:
+
+	/**
+	 * Create an instance of type ll_memory_pool_for_large_allocations
+	 */
+	ll_memory_pool_for_large_allocations() {
+		_lock = 0;
+		_overprovision = 0.2;
+	}
+
+
+	/**
+	 * Destroy the pool
+	 */
+	~ll_memory_pool_for_large_allocations() {
+		for (size_t i = 0; i < _buffers.size(); i++) {
+			if (_buffers[i].b_buffer != NULL) ::free(_buffers[i].b_buffer);
+		}
+	}
+
+
+	/**
+	 * Allocate a buffer
+	 *
+	 * @param size the size
+	 * @return the buffer
+	 */
+	void* allocate(size_t size) {
+
+		ll_spinlock_acquire(&_lock);
+
+
+		// Find the smallest available buffer that would work
+
+		size_t best = (size_t) -1;
+		for (size_t i = 0; i < _buffers.size(); i++) {
+			buffer_t& b = _buffers[i];
+			if (b.b_in_use || b.b_buffer == NULL) continue;
+
+			if (size <= b.b_size) {
+				if (best == (size_t) -1) {
+					best = i;
+				}
+				else {
+					if (b.b_size < _buffers[best].b_size) {
+						best = i;
+					}
+				}
+			}
+		}
+
+		if (best != (size_t) -1) {
+			buffer_t& b = _buffers[best];
+			b.b_in_use = true;
+			ll_spinlock_release(&_lock);
+			return b.b_buffer;
+		}
+
+
+		// Find the largest buffer to realloc - or make a new allocation
+
+		for (size_t i = 0; i < _buffers.size(); i++) {
+			buffer_t& b = _buffers[i];
+			if (b.b_in_use || b.b_buffer == NULL) continue;
+
+			if (best == (size_t) -1) {
+				best = i;
+			}
+			else {
+				if (b.b_size > _buffers[best].b_size) {
+					best = i;
+				}
+			}
+		}
+
+		size_t s = (size_t) ((1 + _overprovision) * size);
+		void* p = NULL;
+
+		if (best != (size_t) -1) {
+			buffer_t& b = _buffers[best];
+
+			::free(b.b_buffer);
+
+			b.b_in_use = true;
+			b.b_size = s;
+			b.b_buffer = p = malloc(s);
+		}
+		else {
+			buffer_t nb;
+			memset(&nb, 0, sizeof(nb));
+			_buffers.push_back(nb);
+			buffer_t& b = _buffers[_buffers.size()-1];
+
+			b.b_in_use = true;
+			b.b_size = s;
+			b.b_buffer = p = malloc(s);
+		}
+
+		ll_spinlock_release(&_lock);
+
+		if (p == NULL) {
+			LL_E_PRINT("** Out of memory **\n");
+			abort();
+		}
+
+		return p;
+	}
+
+
+	/**
+	 * Free a buffer
+	 *
+	 * @param buffer the buffer
+	 */
+	void free(void* buffer) {
+
+		ll_spinlock_acquire(&_lock);
+
+		for (size_t i = 0; i < _buffers.size(); i++) {
+			buffer_t& b = _buffers[i];
+			if (b.b_buffer == buffer) {
+				assert(b.b_in_use);
+				b.b_in_use = false;
+				ll_spinlock_release(&_lock);
+				return;
+			}
+		}
+
+		ll_spinlock_release(&_lock);
+
+		LL_E_PRINT("** Invalid free **\n");
+		abort();
 	}
 };
 
