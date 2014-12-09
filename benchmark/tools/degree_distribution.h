@@ -107,37 +107,40 @@ public:
 
 	/**
 	 * Print the results
+	 *
+	 * @param f the output file
 	 */
-	virtual void print_results(void) {
+	virtual void print_results(FILE* f) {
+
 		Graph& G = *this->_graph;
 		size_t n = G.max_nodes();
 		size_t m = max_edges;
 
-		printf(" Deg >= X |  Deg < X |    Count |  Percent |  Cummul. |  Percent \n");
-		printf("----------+----------+----------+----------+----------+----------\n");
+		fprintf(f, " Deg >= X |  Deg < X |    Count |  Percent |  Cummul. |  Percent \n");
+		fprintf(f, "----------+----------+----------+----------+----------+----------\n");
 
 		size_t cummulative_count = 0;
 		for (size_t i = 0; i < log2degree_counts.size(); i++) {
 			cummulative_count += log2degree_counts[i];
-			printf(" %8lu | %8lu | %8lu | %8.2lf | %8lu | %8.2lf\n",
+			fprintf(f, " %8lu | %8lu | %8lu | %8.2lf | %8lu | %8.2lf\n",
 					i == 0 ? 0 : (1ul << i), (1ul << (i + 1)) - 1,
 					log2degree_counts[i], 100.0 * log2degree_counts[i] / (double) n,
 					cummulative_count, 100.0 * cummulative_count / (double) n);
 		}
-		printf("\n");
+		fprintf(f, "\n");
 
-		printf(" Deg >= X |  Deg < X | Deg. Sum |  Percent |  Cummul. |  Percent \n");
-		printf("----------+----------+----------+----------+----------+----------\n");
+		fprintf(f, " Deg >= X |  Deg < X | Deg. Sum |  Percent |  Cummul. |  Percent \n");
+		fprintf(f, "----------+----------+----------+----------+----------+----------\n");
 
 		size_t cummulative_sum = 0;
 		for (size_t i = 0; i < log2degree_sums.size(); i++) {
 			cummulative_sum += log2degree_sums[i];
-			printf(" %8lu | %8lu | %8lu | %8.2lf | %8lu | %8.2lf\n",
+			fprintf(f, " %8lu | %8lu | %8lu | %8.2lf | %8lu | %8.2lf\n",
 					i == 0 ? 0 : (1ul << i), (1ul << (i + 1)) - 1,
 					log2degree_sums[i], 100.0 * log2degree_sums[i] / (double) m,
 					cummulative_sum, 100.0 * cummulative_sum / (double) m);
 		}
-		printf("\n");
+		fprintf(f, "\n");
     }
 };
 

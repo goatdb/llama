@@ -61,13 +61,14 @@ using namespace std;
 
 // Comnmand-line arguments
 
-static const char* SHORT_OPTIONS = "hM:S:X:";
+static const char* SHORT_OPTIONS = "hM:S:T:X:";
 
 static struct option LONG_OPTIONS[] =
 {
 	{"help"         , no_argument      , 0, 'h'},
 	{"max-edges"    , required_argument, 0, 'M'},
 	{"seed"         , required_argument, 0, 'S'},
+	{"temp-dir"     , required_argument, 0, 'T'},
 	{"xs-buffer"    , required_argument, 0, 'X'},
 	{0, 0, 0, 0}
 };
@@ -112,6 +113,7 @@ static void usage(const char* arg0) {
 	fprintf(stderr, "  -h, --help            Show this usage information and exit\n");
 	fprintf(stderr, "  -M, --max-edges N     Set maximum number of edges to read\n");
 	fprintf(stderr, "  -S, --seed SEED       Set the random number generator seed\n");
+	fprintf(stderr, "  -T, --temp DIR        Set the temporary directory\n");
 	fprintf(stderr, "  -X, --xs-buffer GB    Set the external sort buffer size, in GB\n");
 	fprintf(stderr, "\n");
 }
@@ -154,6 +156,13 @@ int main(int argc, char** argv) {
 
 			case 'S':
 				seed = atoi(optarg);
+				break;
+
+			case 'T':
+				if (loader_config.lc_tmp_dirs.empty())
+					loader_config.lc_tmp_dirs.push_back(optarg);
+				else
+					loader_config.lc_tmp_dirs[0] = optarg;
 				break;
 
 			case 'X':
