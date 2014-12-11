@@ -93,6 +93,14 @@ class ll_mem_array_collection {
 	bool _own_page_manager;
 
 	ll_mem_array_collection<VT, T>* _master;
+	
+#ifdef LL_MIN_LEVEL
+	/// The minimum level to consider
+	int _min_level;
+#endif
+
+	/// The maximum level to consider
+	int _max_level;
 
 
 public:
@@ -113,7 +121,12 @@ public:
 		}
 
 		_own_page_manager = true;
+		_max_level = -1;
 		_master = NULL;
+
+#ifdef LL_MIN_LEVEL
+		_min_level = 0;
+#endif
 	}
 
 
@@ -127,7 +140,12 @@ public:
 		size_t length = 1 << LL_ENTRIES_PER_PAGE_BITS;
 		_page_manager = new ll_page_manager<T>(length, zero_pages);
 		_own_page_manager = true;
+		_max_level = -1;
 		_master = NULL;
+
+#ifdef LL_MIN_LEVEL
+		_min_level = 0;
+#endif
 	}
 
 
@@ -141,7 +159,12 @@ public:
 
 		_page_manager = page_manager;
 		_own_page_manager = own_page_manager;
+		_max_level = -1;
 		_master = NULL;
+
+#ifdef LL_MIN_LEVEL
+		_min_level = 0;
+#endif
 	}
 
 
@@ -158,6 +181,7 @@ public:
 		_master = master;
 		_own_page_manager = false;
 		_page_manager = master->_page_manager;
+		_max_level = master->_max_level;
 
 		if (level >= (int) master->size()) level = (int) master->size() - 1;
 		if (level < 0) level = 0;
@@ -167,6 +191,10 @@ public:
 				_levels.push_back(master->_levels[i]);
 			}
 		}
+
+#ifdef LL_MIN_LEVEL
+		_min_level = _master->_min_level;
+#endif
 	}
 
 
@@ -252,6 +280,164 @@ public:
 	inline size_t capacity() const {
 		return _levels.capacity();
 	}
+	
+
+#ifdef LL_MIN_LEVEL
+
+	/**
+	 * Get the min level
+	 *
+	 * @return the minimum level to consider
+	 */
+	inline int min_level() const {
+		return _min_level;
+	}
+
+
+	/**
+	 * Set the minimum level to consider
+	 *
+	 * @param m the minimum level
+	 */
+	virtual void set_min_level(size_t m) {
+
+		assert((int) _min_level <= (int) m);
+		_min_level = m;
+	}
+
+#endif
+
+
+	/**
+	 * Get the max level
+	 *
+	 * @return the minimum level to consider
+	 */
+	inline int max_level() const {
+		return _max_level;
+	}
+
+
+	/**
+	 * Get the previous level
+	 *
+	 * @param level the current level ID
+	 * @return the previous level
+	 */
+	inline VT* prev_level(int level) {
+
+		int id = ((int) level) - 1;
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+		if (id < 0) id = LL_MAX_LEVEL;
+#else
+		assert(id >= 0);
+#endif
+
+		return (*this)[id];
+	}
+
+
+	/**
+	 * Get the previous level
+	 *
+	 * @param level the current level ID
+	 * @return the previous level
+	 */
+	inline const VT* prev_level(int level) const {
+
+		int id = ((int) level) - 1;
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+		if (id < 0) id = LL_MAX_LEVEL;
+#else
+		assert(id >= 0);
+#endif
+
+		return (*this)[id];
+	}
+
+
+	/**
+	 * Determine if there is a previous level
+	 *
+	 * @param level the current level ID
+	 * @param true if there is a previous level
+	 */
+	inline bool has_prev_level(int level) const {
+
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+		int id = ((int) level) - 1;
+		if (id < 0) id = LL_MAX_LEVEL;
+		return id < (int) _levels.size() && (*this)[id] != NULL;
+#else
+		return level > 0 && (*this)[level-1] != NULL;
+#endif
+	}
+
+
+	/**
+	 * Get the latest level
+	 *
+	 * @return the latest level if available, or NULL otherwise
+	 */
+	VT* latest_level() {
+		if (_max_level < 0) return NULL;
+		return (*this)[_max_level];
+	}
+
+
+	/**
+	 * Get the latest level
+	 *
+	 * @return the latest level if available, or NULL otherwise
+	 */
+	const VT* latest_level() const {
+		if (_max_level < 0) return NULL;
+		return (*this)[_max_level];
+	}
+
+
+	/**
+	 * Get the next level ID, or fail if there is not enough space
+	 *
+	 * @return the next level ID
+	 */
+	int next_level_id() const {
+		
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+		
+		int new_level_id = _max_level + 1;
+		if (new_level_id > (int) LL_MAX_LEVEL) {
+			new_level_id = 0;
+			if (_min_level == 0) {
+				LL_E_PRINT("Maximum number of levels reached (%ld)\n",
+						(ssize_t) LL_MAX_LEVEL + 1);
+				LL_E_PRINT("Min level = %ld, max level = %ld\n",
+						(ssize_t) _min_level, (ssize_t) _max_level);
+				abort();
+			}
+		}
+
+		if (_max_level >= 0 && _max_level < _min_level && new_level_id >= _min_level) {
+			LL_E_PRINT("Maximum number of levels reached (%ld)\n",
+						(ssize_t) LL_MAX_LEVEL + 1);
+			LL_E_PRINT("Min level = %ld, max level = %ld\n",
+					(ssize_t) _min_level, (ssize_t) _max_level);
+			abort();
+		}
+
+#else
+
+		int new_level_id = _levels.size();
+		if (new_level_id > (int) LL_MAX_LEVEL) {
+			LL_E_PRINT("Maximum number of levels reached (%ld)\n",
+						(ssize_t) LL_MAX_LEVEL + 1);
+			abort();
+		}
+
+#endif
+
+		return new_level_id;
+	}
 
 
 	/**
@@ -263,9 +449,23 @@ public:
 	VT* new_level(size_t size) {
 
 		assert(_master == NULL);
+		
+		int new_level_id = next_level_id();
+		assert(new_level_id >= 0);
 
-		VT* v = new VT(this, _levels.size(), size);
+		_max_level = new_level_id;
+
+		VT* v = new VT(this, new_level_id, size);
+
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+		while ((ssize_t) _levels.size() <= new_level_id) _levels.push_back(NULL);
+
+		assert(_levels[new_level_id] == NULL);
+		_levels[new_level_id] = v;
+#else
 		_levels.push_back(v);
+#endif
+
 		return v;
 	}
 
@@ -294,6 +494,23 @@ public:
 
 		delete _levels[level];
 		_levels[level] = NULL;
+	}
+
+
+	/**
+	 * Delete all levels except the specified number of most recent levels
+	 *
+	 * @param keep the number of levels to keep
+	 */
+	void keep_only_recent_levels(size_t keep) {
+
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+		LL_NOT_IMPLEMENTED;
+#endif
+
+		for (int l = 0; l <= ((int) _max_level) - (int) keep; l++) {
+			if (level_exists(l)) delete_level(l);
+		}
 	}
 
 
@@ -355,8 +572,8 @@ public:
 #ifdef LL_ONE_VT
 
 		if (level == 0) {
-			_array = (T*) malloc(sizeof(T) * (size + 4));
-			memset(_array, 0xff, sizeof(T) * (size + 4));
+			_array = (T*) malloc(sizeof(T) * (size + LL_ENTRIES_PER_PAGE));
+			memset(_array, 0xff, sizeof(T) * (size + LL_ENTRIES_PER_PAGE));
 		}
 		else {
 			ll_mem_array_flat<T>* p = (*_levels)[level-1];
@@ -380,10 +597,10 @@ public:
 
 #else
 
-		_array = (T*) malloc(sizeof(T) * (size + 4));
+		_array = (T*) malloc(sizeof(T) * (size + LL_ENTRIES_PER_PAGE));
 
 		// TODO How to configure this? This is assumed by ll_slcsr
-		memset(_array, 0xff, sizeof(T) * (size + 4));
+		memset(_array, 0xff, sizeof(T) * (size + LL_ENTRIES_PER_PAGE));
 
 #endif
 		
@@ -427,8 +644,8 @@ public:
 
 		// Copy the previous vertex table
 
-		if (_level > 0) {
-			ll_mem_array_flat<T>* p = (*_levels)[_level-1];
+		if (_levels->has_prev_level(_level)) {
+			ll_mem_array_flat<T>* p = _levels->prev_level(_level);
 			size_t l = std::min(_size, p->_size) + 4;
 			if (_array != p->_array) memcpy(_array, p->_array, l * sizeof(T));
 		}
@@ -520,8 +737,8 @@ public:
 		iter.vi_next_node = start;
 		iter.vi_end = end == -1 ? _size : std::min<node_t>(end, _size);
 
-		if (_level > 0) {
-			auto* prev = (*_levels)[_level-1];
+		if (_levels->has_prev_level(_level)) {
+			auto prev = _levels->prev_level(_level);
 			while (iter.vi_next_node < (node_t) prev->_size
 					&& iter.vi_next_node < iter.vi_end) {
 				if (_array[iter.vi_next_node] == prev->_array[iter.vi_next_node]) {
@@ -551,8 +768,8 @@ public:
 		else {
 			iter.vi_value = &_array[r];
 
-			if (_level > 0) {
-				auto* prev = (*_levels)[_level-1];
+			if (_levels->has_prev_level(_level)) {
+				auto prev = _levels->prev_level(_level);
 				while (iter.vi_next_node < (node_t) prev->_size
 						&& iter.vi_next_node < iter.vi_end) {
 					if (_array[iter.vi_next_node] == prev->_array[iter.vi_next_node]) {
@@ -641,8 +858,31 @@ public:
 		if (_size < size) return;
 
 		_size = size;
-		_array = (T*) realloc(_array, sizeof(T) * _size);
+		_array = (T*) realloc(_array, sizeof(T) * (_size + LL_ENTRIES_PER_PAGE));
 	}
+
+
+	/**
+	 * Get the number of pages
+	 *
+	 * @return the number of pages
+	 */
+	inline size_t pages() const {
+		size_t n = _size >> LL_ENTRIES_PER_PAGE_BITS;
+		if ((n << LL_ENTRIES_PER_PAGE_BITS) < _size) n++;
+		return n;
+	}
+
+
+	/**
+	 * Return the page
+	 *
+	 * @param index the page index
+	 */
+	inline T* page(size_t index) {
+		return &_array[index << LL_ENTRIES_PER_PAGE_BITS];
+	}
+
 
 
 private:
@@ -721,8 +961,8 @@ public:
 		bool free_indirection = _indirection != NULL;
 		bool free_page_ids = _page_ids != NULL;
 
-		if (_level > 0 && (*_levels)[_level-1] != NULL) {
-			auto vt = (*_levels)[_level-1];
+		if (_levels->has_prev_level(_level)) {
+			auto vt = _levels->prev_level(_level);
 			if (_indirection == vt->_indirection) free_indirection = false;
 			if (_page_ids    == vt->_page_ids   ) free_page_ids    = false;
 		}
@@ -848,12 +1088,11 @@ public:
 	 */
 	void cow_init(bool zero=false) {
 		
-		assert(_level > 0);
 		assert(_indirection == NULL && _page_ids == NULL);
 
 		_modified_pages = 0;
 
-		auto vt = (*_levels)[_level-1];
+		auto vt = _levels->prev_level(_level);
 		assert(vt != NULL);
 
 		if (_pages <= vt->_pages) {
@@ -885,7 +1124,7 @@ public:
 		if (_modified_pages == 0) {
 			ll_spinlock_acquire(&_cow_spinlock);
 			if (_modified_pages == 0) {
-				auto vt = (*_levels)[_level-1];
+				auto vt = _levels->prev_level(_level);
 				if (_indirection == vt->_indirection) {
 					_indirection = (T**) malloc(sizeof(T*) * (_pages + 1));
 					_page_ids = (size_t*) malloc(sizeof(size_t) * (_pages + 1));
@@ -978,8 +1217,8 @@ public:
 		iter.vi_next_node = start;
 		iter.vi_end = end == -1 ? _size : std::min<node_t>(end, _size);
 		
-		if (_level > 0) {
-			auto* prev = (*_levels)[_level-1];
+		if (_levels->has_prev_level(_level)) {
+			auto prev = _levels->prev_level(_level);
 			size_t page = iter.vi_next_node >> LL_ENTRIES_PER_PAGE_BITS;
 			T* d = _indirection[page];
 
@@ -1011,8 +1250,8 @@ public:
 
 		iter.vi_value = pointer(r);
 			
-		if (_level > 0) {
-			auto* prev = (*_levels)[_level-1];
+		if (_levels->has_prev_level(_level)) {
+			auto prev = _levels->prev_level(_level);
 			T* zp = _levels->page_manager()->zero_page_ptr();
 
 			while (iter.vi_next_node < (node_t) _size
@@ -1086,6 +1325,16 @@ public:
 	 */
 	inline size_t pages() const {
 		return _pages;
+	}
+
+
+	/**
+	 * Return the page
+	 *
+	 * @param index the page index
+	 */
+	inline T* page(size_t index) {
+		return _indirection[index];
 	}
 
 
@@ -1201,23 +1450,23 @@ private:
 
 		if (start >= end) return;
 
-		assert(_level > 0);
-		size_t mp = (*_levels)[_level-1]->_pages;
+		auto prev = _levels->prev_level(_level);
+		size_t mp = prev->_pages;
 		if (end <= mp) {
 			memcpy(&_indirection[start],
-					&(*_levels)[_level-1]->_indirection[start],
+					&prev->_indirection[start],
 					sizeof(T*) * (end - start));
 			memcpy(&_page_ids[start],
-					&(*_levels)[_level-1]->_page_ids[start],
+					&prev->_page_ids[start],
 					sizeof(size_t) * (end - start));
 			_levels->page_manager()->acquire_pages(&_page_ids[start], end-start);
 		}
 		else if (start < mp) {
 			memcpy(&_indirection[start],
-					&(*_levels)[_level-1]->_indirection[start],
+					&prev->_indirection[start],
 					sizeof(T*) * (mp - start));
 			memcpy(&_page_ids[start],
-					&(*_levels)[_level-1]->_page_ids[start],
+					&prev->_page_ids[start],
 					sizeof(size_t) * (mp - start));
 			_levels->page_manager()->acquire_pages(&_page_ids[start], mp-start);
 
