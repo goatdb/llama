@@ -1440,7 +1440,11 @@ int main(int argc, char** argv)
 	}
 
 	
+	//
+	//
 	// Init
+	//
+	//
 	
 	if (verbose) {
 		fprintf(stderr, "LLAMA BENCHMARK COLLECTION\n\n");
@@ -1499,12 +1503,12 @@ int main(int argc, char** argv)
 #endif
 #if B < 0 || B == 12
 # ifdef BENCHMARK_WRITABLE
-	LL_RT_COND_CREATE(run_task_class, 12, ll_t_delete_edgesraph);
+	LL_RT_COND_CREATE(run_task_class, 12, ll_t_delete_edges);
 # endif
 #endif
 #if B < 0 || B == 13
 # ifdef BENCHMARK_WRITABLE
-	LL_RT_COND_CREATE(run_task_class, 13, ll_t_delete_nodesraph);
+	LL_RT_COND_CREATE(run_task_class, 13, ll_t_delete_nodes);
 # endif
 #endif
 #if B < 0 || B == 14
@@ -1695,7 +1699,7 @@ int main(int argc, char** argv)
 			&& print_node_from != LL_NIL_NODE) {
 		printf("\n");
 		printf("Number of nodes : %lu\n", (size_t) G.max_nodes());
-		//printf("Number of edges : %lu\n", (size_t) G.max_edges());
+		if (G.num_levels() == 1) printf("Number of edges : %lu\n", (size_t) G.max_edges(0));
 		printf("Number of levels: %lu\n", (size_t) G.num_levels());
 		printf("\n");
 		printf("A part of the graph:\n");
@@ -1729,7 +1733,11 @@ int main(int argc, char** argv)
 	}
 
 
+	//
+	//
 	// Run the benchmark
+	//
+	//
 
 	if (counter.print_progress && counter.benchmark_count > 0) {
 		benchmark->set_print_progress(verbose);
@@ -1962,7 +1970,8 @@ int main(int argc, char** argv)
 		  );
 	printf("Type       : %s\n\n", configuration_summary.c_str());
 	printf("# Nodes    : %lu\n", (size_t) graph.max_nodes());
-	//printf("# Edges    : %lu\n\n", (size_t) graph.max_edges());
+	if (graph.ro_graph().num_levels() == 1)
+		printf("# Edges    : %lu\n", (size_t) graph.ro_graph().max_edges(0));
 	printf("# Levels   : %lu\n", (size_t) G.num_levels());
 
 	stats.print_stats(stdout);
