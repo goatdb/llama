@@ -57,6 +57,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "llama/ll_mlcsr_helpers.h"
 #include "llama/ll_page_manager.h"
 #include "llama/ll_writable_elements.h"
 

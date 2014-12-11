@@ -131,6 +131,13 @@ public:
 				&_deletions_adapter_in);
 
 		_next_new_node_id = _ro_graph.max_nodes();
+
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+		if (__w_pool.chunk_size() > ((1ul << LL_MEM_POOL_ALIGN_BITS) << LL_W_MEM_POOL_MAX_OFFSET_BITS)) {
+			LL_E_PRINT("__w_pool.chunk_size() is too large\n");
+			abort();
+		}
+#endif
 	}
 
 
@@ -570,9 +577,20 @@ protected:
 		LL_D_NODE2_PRINT(source, target, "Add %ld --> %ld\n", source, target);
 
 		w_edge_allocator _allocator;
-		w_edge* p_edge = p_source->wn_out_edges.append(_allocator());
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+		size_t we_chunk, we_offset;
+		w_edge* we = _allocator(&we_chunk, &we_offset);
+		we->we_public_id = LL_EDGE_CREATE(LL_WRITABLE_LEVEL,
+				(we_chunk << LL_W_MEM_POOL_MAX_OFFSET_BITS)
+				| (we_offset >> LL_MEM_POOL_ALIGN_BITS));
+#else
+		w_edge* we = _allocator();
+		we->we_public_id = LL_EDGE_CREATE(LL_WRITABLE_LEVEL, (edge_t) (long) we);
+#endif
+		w_edge* p_edge = p_source->wn_out_edges.append(we);
 		p_target->wn_in_edges.append(p_edge);
 
+#ifndef LL_WRITABLE_USE_MEMORY_POOL
 #ifdef LL_NODE32
 #warning "LL_NODE32 is not good; please use LL_NODE64 instead!"
 		if (((unsigned long) p_edge) >= (1ul << 28)) {
@@ -586,12 +604,13 @@ protected:
 			fprintf(stderr, "\n\nFATAL: Edge pointer out of range %p\n", p_edge);
 			abort();
 		}
+#endif
 
 #ifdef LL_TX
 		g_tx_write = true;
 #endif
 
-		edge_t out_edge = LL_EDGE_CREATE(LL_WRITABLE_LEVEL, (edge_t) (long) p_edge);
+		edge_t out_edge = we->we_public_id;
 		assert(LL_EDGE_GET_WRITABLE(out_edge) == p_edge);
 
 		p_edge->we_target = target;
@@ -738,7 +757,6 @@ public:
 		if (_ro_graph.node_exists(source) && _ro_graph.node_exists(target)) {
 			ro_edge = _ro_graph.find(source, target);
 			if (ro_edge != LL_NIL_EDGE) {
-				// TODO Add backref during the checkpoint
 				ro_weight = (*w)[ro_edge];
 				LL_D_NODE2_PRINT(source, target,
 						"Found duplicate of %lx, old weight = %u, "
@@ -1248,7 +1266,7 @@ retry:
 		while (true);
 #endif
 
-		return LL_EDGE_CREATE(LL_WRITABLE_LEVEL, r);
+		return LL_W_EDGE_CREATE(r);
 	}
 
 
@@ -1395,7 +1413,7 @@ retry:
 		while (true);
 #endif
 
-		return LL_EDGE_CREATE(LL_WRITABLE_LEVEL, r);
+		return LL_W_EDGE_CREATE(r);
 	}
 
 
@@ -1541,7 +1559,7 @@ retry:
 		while (true);
 #endif
 
-		return LL_EDGE_CREATE(LL_WRITABLE_LEVEL, r);
+		return LL_W_EDGE_CREATE(r);
 	}
 
 
@@ -1953,10 +1971,10 @@ public:
 
 		// Check whether we ran out of the level ID space, and if so, fail
 
-		if (_ro_graph.num_levels() + 1 >= LL_MAX_LEVEL) {
+		/*if (_ro_graph.num_levels() + 1 >= LL_MAX_LEVEL) {
 			fprintf(stderr, "Fatal: Too many RO levels. Cannot recover!");
 			abort();
-		}
+		}*/
 		
 		
 		// Create the new level
@@ -1995,10 +2013,10 @@ public:
 
 		// Check whether we ran out of the level ID space
 
-		if (_ro_graph.num_levels() + 1 >= LL_MAX_LEVEL) {
+		/*if (_ro_graph.num_levels() >= LL_MAX_LEVEL) {
 			fprintf(stderr, "Error: Too many levels\n");
 			abort();
-		}
+		}*/
 	}
 
 

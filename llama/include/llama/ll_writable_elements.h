@@ -40,6 +40,7 @@
 #include "llama/ll_common.h"
 #include "llama/ll_growable_array.h"
 #include "llama/ll_writable_array.h"
+#include "llama/ll_mlcsr_helpers.h"
 
 #include <climits>
 #include <unordered_map>
@@ -60,6 +61,36 @@
 
 #ifdef LL_WRITABLE_USE_MEMORY_POOL
 #include "llama/ll_mem_helper.h"
+#endif
+
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+#define LL_W_MEM_POOL_MAX_BUFFERS_BITS		15
+#define LL_W_MEM_POOL_MAX_BUFFERS			(1ul << (LL_W_MEM_POOL_MAX_BUFFERS_BITS))
+#define LL_W_MEM_POOL_MAX_OFFSET_BITS		(26 - LL_MEM_POOL_ALIGN_BITS)
+#endif
+
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+#define LL_EDGE_GET_WRITABLE(x)				((w_edge*) (__w_pool.pointer( \
+				(((x) >> LL_W_MEM_POOL_MAX_OFFSET_BITS) \
+					 & (LL_W_MEM_POOL_MAX_BUFFERS - 1)), \
+				((x) & ((1ul << LL_W_MEM_POOL_MAX_OFFSET_BITS)-1)) \
+					<< LL_MEM_POOL_ALIGN_BITS)))
+#else
+#define LL_EDGE_GET_WRITABLE(x)				((w_edge*) (LL_EDGE_INDEX(x)))
+#endif
+
+#define LL_W_EDGE_CREATE(edge)				(((w_edge*) (long) (edge))->we_public_id)
+
+#ifdef LL_WRITABLE_USE_MEMORY_POOL
+#ifdef LL_NODE32
+#	if (32 - LL_BITS_LEVEL) < (LL_W_MEM_POOL_MAX_BUFFERS_BITS + LL_W_MEM_POOL_MAX_OFFSET_BITS)
+#		error "Not enough bits to encode the w_edge position in the memory pool"
+#	endif
+#else
+#	if (64 - LL_BITS_LEVEL) < (LL_W_MEM_POOL_MAX_BUFFERS_BITS + LL_W_MEM_POOL_MAX_OFFSET_BITS)
+#		error "Not enough bits to encode the w_edge position in the memory pool"
+#	endif
+#endif
 #endif
 
 
@@ -91,8 +122,15 @@ public:
 	/// A numerical ID
 	edge_t we_numerical_id;
 
-	/// A numerical ID of the reverse edge
-	edge_t we_reverse_numerical_id;
+	union {		// TODO Check if using union here is okay
+
+		/// A numerical ID of the reverse edge
+		edge_t we_reverse_numerical_id;
+
+		/// The public node ID
+		edge_t we_public_id;
+
+	};
 
 #ifdef LL_TIMESTAMPS
 
@@ -334,6 +372,19 @@ struct w_edge_allocator {
 	 */
 	w_edge* operator() (void) {
 		w_edge* w = __w_pool.allocate<w_edge>();
+		new (w) w_edge();
+		return w;
+	}
+
+	/**
+	 * Allocate a new writable edge
+	 *
+	 * @param o_chunk the pointer to store the chunk number
+	 * @param o_offset the pointer to store the offset within the chunk
+	 * @return the writable edge
+	 */
+	w_edge* operator() (size_t* o_chunk, size_t* o_offset) {
+		w_edge* w = __w_pool.allocate<w_edge>(1, o_chunk, o_offset);
 		new (w) w_edge();
 		return w;
 	}

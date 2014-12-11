@@ -61,9 +61,7 @@
 #	define LL_DATA_TYPE							unsigned long long
 #	define LL_ONE								1ull
 #	define LL_BITS_TOTAL						64
-//TODO Too many bits for writable elements - or fix the writable level!
-//#	define LL_BITS_LEVEL						28
-#	define LL_BITS_LEVEL						10
+#	define LL_BITS_LEVEL						26
 #endif
 
 #define LL_MASK(bits)							((LL_ONE << (bits)) - 1)
@@ -83,7 +81,6 @@
 
 #define LL_WRITABLE_LEVEL					(LL_MAX_LEVEL + 1)
 #define LL_EDGE_IS_WRITABLE(x)				(LL_EDGE_LEVEL(x) == LL_WRITABLE_LEVEL)
-#define LL_EDGE_GET_WRITABLE(x)				((w_edge*) (LL_EDGE_INDEX(x)))
 
 
 /*
