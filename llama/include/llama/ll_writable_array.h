@@ -38,6 +38,9 @@
 #define LL_WRITABLE_ARRAY_H_
 
 #include "llama/ll_common.h"
+#include "llama/ll_writable_elements.h"
+
+#define LL_WRITABLE_SWCOW_FREE_LIST
 
 
 
@@ -270,7 +273,7 @@ public:
 		__COMPILER_FENCE;
 
 #ifdef PARALLEL_FREE_W_NODES
-#		pragma omp parallel for schedule(dynamic,4096)
+#		pragma omp parallel for schedule(dynamic,65536)
 		for (size_t i = 0; i < _size; i++) {
 			T r = *((T*) &_array[i]);
 			if (r != nil && r != block) _deallocator(r);
@@ -288,7 +291,7 @@ public:
 			memset(_array, 0, sizeof(*_array) * _size);
 		}
 		else {
-#			pragma omp parallel for schedule(dynamic,4096)
+#			pragma omp parallel for schedule(dynamic,65536)
 			for (size_t i = 0; i < _size; i++) {
 				_array[i].store(nil);
 			}
@@ -315,12 +318,12 @@ private:
 //==========================================================================//
 
 
-#if 0
+#ifdef LL_WRITABLE_SWCOW_FREE_LIST
 
 // Note: If used, type T cannot be longer than long long.
 
 #define FREE_W_VT_SWCOW_PAGES_LENGTH		4
-static long long* __free_w_vt_swcow_pages[FREE_W_EDGES_LENGTH] = { FOUR_NULLS };
+static long long* __free_w_vt_swcow_pages[FREE_W_VT_SWCOW_PAGES_LENGTH] = { NULL, NULL, NULL, NULL };
 
 
 /**
@@ -346,7 +349,7 @@ void* __w_vt_swcow_page_allocate(void) {
 		long long* x = __free_w_vt_swcow_pages[i];
 
 		if (x != NULL) {
-			if (__sync_bool_compare_and_swap(&__free_w_edges[i], x, (long*) *x)) {
+			if (__sync_bool_compare_and_swap(&__free_w_vt_swcow_pages[i], x, (long*) *x)) {
 				return x;
 			}
 		}
@@ -376,6 +379,7 @@ void __w_vt_swcow_page_deallocate(void* page) {
 	}
 	while (!__sync_bool_compare_and_swap(&__free_w_vt_swcow_pages[i], x, n));
 }
+
 #endif
 
 
@@ -661,9 +665,12 @@ private:
 		 */
 		long operator() (void) {
 
+#ifdef LL_WRITABLE_SWCOW_FREE_LIST
+			std::atomic<T>* a = (std::atomic<T>*) __w_vt_swcow_page_allocate();
+#else
 			std::atomic<T>* a = (std::atomic<T>*) malloc
 							(sizeof(std::atomic<T>) * LL_ENTRIES_PER_PAGE);
-			//std::atomic<T>* a = (std::atomic<T>*) __w_vt_swcow_page_allocate();
+#endif
 			
 			if (nil == (T) 0) {
 				memset(a, 0, sizeof(std::atomic<T>) * LL_ENTRIES_PER_PAGE);
@@ -697,8 +704,11 @@ private:
 				if (r != nil && r != block) _deallocator(r);
 			}
 
+#ifdef LL_WRITABLE_SWCOW_FREE_LIST
+			__w_vt_swcow_page_deallocate((std::atomic<T>*) array);
+#else
 			free((std::atomic<T>*) array);
-			//__w_vt_swcow_page_deallocate((std::atomic<T>*) array);
+#endif
 		}
 	};
 
