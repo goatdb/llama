@@ -318,6 +318,8 @@ public:
 			return load_direct_with_stat(graph, config);
 		}
 
+		LL_D_PRINT("Load without stat, level=%lu\n", new_level);
+
 
 		// Check features
 
@@ -387,6 +389,13 @@ public:
 			fprintf(stderr, "[<]");
 		}
 
+
+		// XXX This split should be done instead if
+		// config->lc_direction == LL_L_UNDIRECTED_DOUBLE,
+		// since that's guaranteed to mess up the sort order,
+		// while config->lc_deduplicate does not necessarily
+		// mess up things
+
 		if (config->lc_deduplicate) {
 
 			if (already_sorted) {
@@ -410,8 +419,8 @@ public:
 				last_head = e.head;
 				last_tail = e.tail;
 
-				if (e.tail >= max_nodes) max_nodes = e.tail + 1;
-				if (e.head >= max_nodes) max_nodes = e.head + 1;
+				if (e.tail >= (NodeType) max_nodes) max_nodes = e.tail + 1;
+				if (e.head >= (NodeType) max_nodes) max_nodes = e.head + 1;
 
 				*out_sort << e;
 
@@ -533,8 +542,8 @@ public:
 				last_head = e.head;
 				last_tail = e.tail;
 
-				if (e.tail >= max_nodes) max_nodes = e.tail + 1;
-				if (e.head >= max_nodes) max_nodes = e.head + 1;
+				if (e.tail >= (NodeType) max_nodes) max_nodes = e.tail + 1;
+				if (e.head >= (NodeType) max_nodes) max_nodes = e.head + 1;
 
 				if (max_nodes > degrees_capacity) {
 					size_t d = degrees_capacity;
@@ -600,10 +609,11 @@ public:
 
 		// Create the out-edges level
 
-		graph->out().init_level_from_degrees(max_nodes, degrees_out, NULL); 
+		auto& out = graph->out();
+		out.init_level_from_degrees(max_nodes, degrees_out, NULL); 
 
 		LL_ET<node_t>* et = graph->out().edge_table(new_level);
-		auto* vt = graph->out().vertex_table(new_level); (void) vt;
+		auto* vt = out.vertex_table(new_level); (void) vt;
 
 
 		// If the out-to-in, in-to-out properties are not enabled, disable
@@ -871,6 +881,69 @@ public:
 
 
 	/**
+	 * Load the data into one or more queues of requests
+	 *
+	 * @param request_queues the request queues
+	 * @param num_stripes the number of stripes (queues array length)
+	 * @param config the loader configuration
+	 * @return true if there are more edges to load
+	 */
+	bool load_to_request_queues(ll_la_request_queue** request_queues,
+			size_t num_stripes, const ll_loader_config* config) {
+
+
+		// Check features
+
+		feature_vector_t features;
+		features << LL_L_FEATURE(lc_max_edges);
+		features << LL_L_FEATURE(lc_no_properties);
+
+		config->assert_features(false /*direct*/, true /*error*/, features);
+
+
+		// Initializie
+
+		size_t max_edges = 0;
+		size_t chunk_size = config->lc_max_edges;
+		bool load_weight = !config->lc_no_properties;
+
+		xs_w_edge e;
+		bool has_more;
+
+		while ((has_more = next_edge(&e.tail, &e.head, &e.weight))) {
+			max_edges++;
+
+			LL_D_NODE2_PRINT(e.tail, e.head, "%u --> %u\n", (unsigned) e.tail,
+					(unsigned) e.head);
+
+			ll_la_request_with_edge_properties* request;
+
+			if (HasWeight && load_weight) {
+				// XXX
+				//LL_NOT_IMPLEMENTED;
+			}
+
+#ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+			request = new ll_la_add_edge_for_streaming_with_weights
+				<node_t>((node_t) e.tail, (node_t) e.head);
+#else
+			request = new ll_la_add_edge
+				<node_t>((node_t) e.tail, (node_t) e.head);
+#endif
+
+			size_t stripe = (e.tail >> (LL_ENTRIES_PER_PAGE_BITS+3))
+				% num_stripes;
+			request_queues[stripe]->enqueue(request);
+
+			if (chunk_size > 0)
+				if (max_edges % chunk_size == 0) break;
+		}
+
+		return has_more;
+	}
+
+
+	/**
 	 * Load the graph into the writable representation
 	 *
 	 * @param graph the graph
@@ -884,7 +957,7 @@ public:
 		// Check features
 
 		feature_vector_t features;
-		features << LL_L_FEATURE(lc_incremental_max_edges);
+		features << LL_L_FEATURE(lc_max_edges);
 		features << LL_L_FEATURE(lc_no_properties);
 
 		config->assert_features(false /*direct*/, true /*error*/, features);
@@ -892,14 +965,11 @@ public:
 
 		// Initializie
 
-		size_t max_edges = 0;
-		size_t chunk_size = config->lc_incremental_max_edges;
-		bool load_weight = !config->lc_no_properties;
-
-		xs_w_edge e;
-
 		size_t num_stripes = omp_get_max_threads();
-		ll_la_request_queue request_queue[num_stripes];
+		ll_la_request_queue* request_queues[num_stripes];
+		for (size_t i = 0; i < num_stripes; i++) {
+			request_queues[i] = new ll_la_request_queue();
+		}
 
 		LL_D_PRINT("Initialize\n");
 
@@ -915,53 +985,26 @@ public:
 			graph->tx_begin();
 
 			for (size_t i = 0; i < num_stripes; i++)
-				request_queue[i].shutdown_when_empty(false);
+				request_queues[i]->shutdown_when_empty(false);
 
 			#pragma omp parallel
 			{
 				if (omp_get_thread_num() == 0) {
 
-					while ((has_more = next_edge(&e.tail, &e.head, &e.weight))) {
-						max_edges++;
-
-						LL_D_NODE2_PRINT(e.tail, e.head, "%u --> %u\n", e.tail,
-								e.head);
-
-						ll_la_request_with_edge_properties* request;
-
-						if (HasWeight && load_weight) {
-							// XXX
-							//LL_NOT_IMPLEMENTED;
-						}
-
-#ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
-						request = new ll_la_add_edge_for_streaming_with_weights
-							<node_t>((node_t) e.tail, (node_t) e.head);
-#else
-						request = new ll_la_add_edge
-							<node_t>((node_t) e.tail, (node_t) e.head);
-#endif
-
-						size_t stripe = (e.tail >> (LL_ENTRIES_PER_PAGE_BITS+3))
-							% num_stripes;
-						request_queue[stripe].enqueue(request);
-
-						if (chunk_size > 0)
-							if (max_edges % chunk_size == 0) break;
-					}
-
+					has_more = this->load_to_request_queues(request_queues,
+							num_stripes, config);
 
 					// Add a worker
 
 					for (size_t i = 0; i < num_stripes; i++)
-						request_queue[i].shutdown_when_empty();
+						request_queues[i]->shutdown_when_empty();
 					for (size_t i = 0; i < num_stripes; i++)
-						request_queue[i].run(*graph);
+						request_queues[i]->run(*graph);
 				}
 				else {
 					int t = omp_get_thread_num();
 					for (size_t i = 0; i < num_stripes; i++, t++)
-						request_queue[t % num_stripes].worker(*graph);
+						request_queues[t % num_stripes]->worker(*graph);
 				}
 			}
 
@@ -972,6 +1015,8 @@ public:
 
 		_last_has_more = _has_more;
 		_has_more = has_more;
+
+		for (size_t i = 0; i < num_stripes; i++) delete request_queues[i];
 
 		return true;
 	}
@@ -987,9 +1032,33 @@ public:
 	virtual bool pull(ll_writable_graph* graph, size_t max_edges) {
 
 		ll_loader_config config;
-		config.lc_incremental_max_edges = max_edges;
+		config.lc_max_edges = max_edges;
 
 		if (!load_incremental(graph, &config)) abort();
+
+		return _last_has_more;
+	}
+
+
+	/**
+	 * Load the next batch of data to request queues
+	 *
+	 * @param request_queues the request queues
+	 * @param num_stripes the number of stripes (queues array length)
+	 * @param max_edges the maximum number of edges
+	 * @return true if data was loaded, false if there are no more data
+	 */
+	virtual bool pull(ll_la_request_queue** request_queues, size_t num_stripes,
+			size_t max_edges) {
+
+		ll_loader_config config;
+		config.lc_max_edges = max_edges;
+
+		bool has_more = load_to_request_queues(request_queues, num_stripes,
+				&config);
+
+		_last_has_more = _has_more;
+		_has_more = has_more;
 
 		return _last_has_more;
 	}
@@ -1132,6 +1201,7 @@ private:
 		features << LL_L_FEATURE(lc_reverse_edges);
 		features << LL_L_FEATURE(lc_deduplicate);
 		features << LL_L_FEATURE(lc_no_properties);
+		features << LL_L_FEATURE(lc_max_edges);
 
 		config->assert_features(false /*direct*/, true /*error*/, features);
 
@@ -1151,6 +1221,10 @@ private:
 		if (!stat(&max_nodes, &max_edges)) {
 			LL_E_PRINT("The graph stat call failed\n");
 			abort();
+		}
+
+		if (config->lc_max_edges > 0 && max_edges > config->lc_max_edges) {
+			max_edges = config->lc_max_edges;
 		}
 
 		if (new_level > 0) {
@@ -1223,6 +1297,11 @@ private:
 
 			while (next_edge(&e.tail, &e.head, &e.weight)) {
 				loaded_edges++;
+
+				if (config->lc_max_edges > 0
+						&& loaded_edges > config->lc_max_edges) {
+					break;
+				}
 
 				LL_D_NODE2_PRINT(e.tail, e.head, "%ld --> %ld\n", (long) e.tail,
 						(long) e.head);
@@ -1311,8 +1390,16 @@ private:
 			NodeType last_tail = (NodeType) LL_NIL_NODE;
 			NodeType last_head = (NodeType) LL_NIL_NODE;
 
+			size_t read_edges = 0;
+
 			while (next_edge(&e.tail, &e.head, &e.weight)) {
 				loaded_edges++;
+				read_edges++;
+
+				if (config->lc_max_edges > 0
+						&& read_edges > config->lc_max_edges) {
+					break;
+				}
 
 				if (config->lc_direction == LL_L_UNDIRECTED_ORDERED) {
 					if (e.tail > e.head) {
@@ -1378,9 +1465,11 @@ private:
 					// Init the node and write the edges after we moved to the
 					// next node
 
-					if (last_tail != buffer->tail && last_tail != (NodeType) LL_NIL_NODE) {
-						load_node_out(graph, et, new_level, last_tail, adj_list_buffer,
-								weight_buffer, prop_weight, in_sort);
+					if (last_tail != buffer->tail
+							&& last_tail != (NodeType) LL_NIL_NODE) {
+						load_node_out(graph, et, new_level, last_tail,
+								adj_list_buffer, weight_buffer, prop_weight,
+								in_sort);
 						adj_list_buffer.clear();
 						weight_buffer.clear();
 					}

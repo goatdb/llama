@@ -98,8 +98,14 @@ public:
 	/// The buffer size in bytes for external sort (0 = auto-configure)
 	size_t lc_xs_buffer_size;
 
-	/// The max number of edges to load (incremental ingest only, 0 = all)
-	size_t lc_incremental_max_edges;
+	/// The max number of edges to load
+	size_t lc_max_edges;
+
+	/// The partial load - part number (1-based, not 0-based)
+	size_t lc_partial_load_part;
+
+	/// The partial load - the total number of parts
+	size_t lc_partial_load_num_parts;
 
 
 public:
@@ -119,7 +125,9 @@ public:
 		lc_print_progress = false;
 		lc_xs_buffer_size = 0;
 
-		lc_incremental_max_edges = 0;
+		lc_max_edges = 0;
+		lc_partial_load_part = 0;
+		lc_partial_load_num_parts = 0;
 	}
 
 
@@ -148,10 +156,12 @@ public:
 		FEATURE(lc_deduplicate);
 		FEATURE(lc_no_properties);
 
-		if ( direct) FEATURE(lc_reverse_edges);
-		if ( direct) FEATURE(lc_reverse_maps);
+		if (direct) FEATURE(lc_reverse_edges);
+		if (direct) FEATURE(lc_reverse_maps);
 
-		if (!direct) FEATURE(lc_incremental_max_edges);
+		FEATURE(lc_max_edges);
+		FEATURE(lc_partial_load_part);
+		FEATURE(lc_partial_load_num_parts);
 
 #		undef FEATURE
 
@@ -172,6 +182,20 @@ public:
 				else {
 					return false;
 				}
+			}
+		}
+
+		if (lc_partial_load_num_parts > 0) {
+			if (lc_partial_load_part <= 0
+					|| lc_partial_load_part > lc_partial_load_num_parts) {
+				LL_E_PRINT("The partial load part ID is out of bounds\n");
+				abort();
+			}
+		}
+		else {
+			if (lc_partial_load_part != 0) {
+				LL_E_PRINT("Partial load part ID without the number of parts\n");
+				abort();
 			}
 		}
 

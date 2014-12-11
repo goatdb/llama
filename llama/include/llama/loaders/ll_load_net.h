@@ -37,7 +37,11 @@
 #ifndef LL_LOAD_NET_H_
 #define LL_LOAD_NET_H_
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <cstdio>
 #include <sstream>
+#include <unistd.h>
 
 #include "llama/ll_mem_array.h"
 #include "llama/ll_writable_graph.h"
@@ -89,8 +93,14 @@ public:
 	virtual void load_direct(ll_mlcsr_ro_graph* graph, const char* file,
 			const ll_loader_config* config) {
 
-		net_loader loader(file);
-		bool r = loader.load_direct(graph, config);
+		ll_loader_config c;
+		if (config != NULL) c = *config;
+		c.lc_partial_load_part = 0;
+		c.lc_partial_load_num_parts = 0;
+
+		net_loader loader(file, config);
+
+		bool r = loader.load_direct(graph, &c);
 		if (!r) abort();
 	}
 
@@ -105,8 +115,14 @@ public:
 	virtual void load_incremental(ll_writable_graph* graph, const char* file,
 			const ll_loader_config* config) {
 
-		net_loader loader(file);
-		bool r = loader.load_incremental(graph, config);
+		ll_loader_config c;
+		if (config != NULL) c = *config;
+		c.lc_partial_load_part = 0;
+		c.lc_partial_load_num_parts = 0;
+
+		net_loader loader(file, config);
+
+		bool r = loader.load_incremental(graph, &c);
 		if (!r) abort();
 	}
 
@@ -125,62 +141,6 @@ public:
 private:
 
 	/**
-	 * Get next line from the .net file
-	 *
-	 * @param fin the file
-	 * @param p_line the pointer to a malloc-ed line buffer
-	 * @param p_line_len the pointer to the line buffer size
-	 * @param p_tail the tail out pointer
-	 * @param p_head the head out pointer
-	 * @return true if it was okay, false on EOF
-	 */
-	static bool net_next_line(FILE* fin, char** p_line, size_t* p_line_len,
-			unsigned* p_tail, unsigned* p_head) {
-
-		ssize_t read;
-
-		while ((read = getline(p_line, p_line_len, fin)) != -1) {
-
-			char* line = *p_line;
-
-			if (*line == '\0' || *line == '#'
-					|| *line == '\n' || *line == '\r') continue;
-
-			size_t ln = strlen(line)-1;
-			if (line[ln] == '\n' || line[ln] == '\r') line[ln] = '\0';
-
-			if (!isdigit(*line)) {
-				fprintf(stderr, "Invalid .net format on line \"%s\"\n", *p_line);
-				abort();
-			}
-
-			char* l = line;
-			while (isdigit(*l)) l++;
-			if (*l == '\0') {
-				fprintf(stderr, "Invalid .net format on line \"%s\"\n", *p_line);
-				abort();
-			}
-
-			while (isspace(*l)) l++;
-			if (*l == '\0' || !isdigit(*l)) {
-				fprintf(stderr, "Invalid .net format on line \"%s\"\n", *p_line);
-				abort();
-			}
-
-			unsigned tail = atoi(line);
-			unsigned head = atoi(l);
-
-			*p_tail = tail;
-			*p_head = head;
-
-			return true;
-		}
-
-		return false;
-	}
-
-
-	/**
 	 * The direct loader for X-Stream Type 1 files
 	 */
 	class net_loader : public ll_edge_list_loader<unsigned, false>
@@ -192,6 +152,18 @@ private:
 		size_t _line_n;
 		char* _line;
 
+		ll_loader_config _config;
+
+		off_t _start_offset;
+		off_t _stop_offset;	/* including the line that _stop_offset-1 points to */
+		off_t _offset;
+		bool _done;
+
+		size_t _file_size;
+		size_t _errors;
+
+		size_t _max_allowed_errors;
+
 
 	public:
 
@@ -199,19 +171,64 @@ private:
 		 * Create an instance of class net_loader
 		 *
 		 * @param file_name the file name
+		 * @param config the loader config
 		 */
-		net_loader(const char* file_name)
+		net_loader(const char* file_name, const ll_loader_config* config = NULL)
 			: ll_edge_list_loader<unsigned, false>() {
 
+			if (config != NULL) {
+				_config = *config;
+
+				if (_config.lc_partial_load_num_parts > 0) {
+					if (_config.lc_partial_load_part <= 0
+							|| (_config.lc_partial_load_part
+								> _config.lc_partial_load_num_parts)) {
+						LL_E_PRINT("The partial load part ID is out of bounds\n");
+						abort();
+					}
+				}
+			}
+
 			_file_name = file_name;
-			_file = fopen(file_name, "rt");
-			if (_file == NULL) {
+			int f = open(file_name, O_RDONLY);
+			if (f < 0) {
 				perror("Cannot open the input file");
 				abort();
 			}
 
+			struct stat st;
+			if (fstat(f, &st) != 0) {
+				perror("Cannot stat the input file");
+				abort();
+			}
+
+			_file_size = st.st_size;
+
+			_file = fdopen(f, "rt");
+			if (_file == NULL) {
+				perror("Cannot open the input stream");
+				abort();
+			}
+
+			if (_config.lc_partial_load_num_parts > 0) {
+				_start_offset = st.st_size * (_config.lc_partial_load_part - 1)
+					/ _config.lc_partial_load_num_parts;
+				_stop_offset = st.st_size * _config.lc_partial_load_part
+					/ _config.lc_partial_load_num_parts;
+				rewind();
+			}
+			else {
+				_start_offset = 0;
+				_stop_offset = 0; //st.st_size;
+			}
+
 			_line_n = 64;
 			_line = (char*) malloc(_line_n);
+
+			_offset = 0;
+			_errors = 0;
+			_done = false;
+			_max_allowed_errors = 100;		// TODO Should be configurable
 		}
 
 
@@ -220,6 +237,7 @@ private:
 		 */
 		virtual ~net_loader() {
 			if (_file != NULL) fclose(_file);
+			if (_line != NULL) free(_line);
 		}
 
 
@@ -236,7 +254,22 @@ private:
 		virtual bool next_edge(unsigned* o_tail, unsigned* o_head,
 				float* o_weight) {
 
-			return net_next_line(_file, &_line, &_line_n, o_tail, o_head);
+			if (_done) return false;
+
+			ssize_t r = net_next_line(_file, &_line, &_line_n, o_tail, o_head);
+			if (r < 0) {
+				_offset = ftell(_file);
+				_done = true;
+				return false;
+			}
+
+			_offset += r;
+
+			if (_stop_offset > 0) {
+				if (_offset >= _stop_offset) _done = true;
+			}
+
+			return true;
 		}
 
 
@@ -244,9 +277,101 @@ private:
 		 * Rewind the input file
 		 */
 		virtual void rewind() {
-			std::rewind(_file);
+
+			_done = false;
+			_offset = _start_offset;
+			_errors = 0;
+
+			if (_start_offset == 0) {
+				std::rewind(_file);
+			}
+			else {
+
+				fseek(_file, _start_offset - 1, SEEK_SET);
+				_offset--;
+
+				int c;
+				while ((c = fgetc(_file)) != EOF) {
+					_offset++;
+					if (c == '\n') break;
+				}
+			}
 		}
 
+
+		/**
+		 * Get next line from the .net file
+		 *
+		 * @param fin the file
+		 * @param p_line the pointer to a malloc-ed line buffer
+		 * @param p_line_len the pointer to the line buffer size
+		 * @param p_tail the tail out pointer
+		 * @param p_head the head out pointer
+		 * @return the number of bytes read, or a negative number on error or EOF
+		 */
+		ssize_t net_next_line(FILE* fin, char** p_line, size_t* p_line_len,
+				unsigned* p_tail, unsigned* p_head) {
+
+			ssize_t read;
+			ssize_t read_total = 0;
+
+			while ((read = getline(p_line, p_line_len, fin)) != -1) {
+
+				char* line = *p_line;
+				read_total += read;
+
+				if (*line == '\0' || *line == '#'
+						|| *line == '\n' || *line == '\r') continue;
+
+				char* s = line;
+				char* e;
+
+				while (isspace(*s)) s++;
+
+				*p_tail = strtol(s, &e, 10);
+				if (s == e || *e == '\0' || !isspace(*e)) {
+					parse_error(line);
+					continue;
+				}
+
+				s = e + 1;
+				while (isspace(*s)) s++;
+
+				*p_head = strtol(s, &e, 10);
+				if (s == e || (*e != '\0' && *e != '\r' && *e != '\n')) {
+					parse_error(line);
+					continue;
+				}
+
+				return read_total;
+			}
+
+			return -1l;
+		}
+
+
+	private:
+
+		/**
+		 * Handle a parse error
+		 *
+		 * @param line the line buffer (will be modified!)
+		 */
+		void parse_error(char* line) {
+
+			char* p;
+			if ((p = strchr(line, '\r')) != NULL) *p = '\0';
+			if ((p = strchr(line, '\n')) != NULL) *p = '\0';
+
+			LL_W_PRINT("Invalid SNAP format on line \"%s\"\n", line);
+
+			_errors++;
+			if (_errors >= _max_allowed_errors) {
+				LL_E_PRINT("Reached the limit of %lu maximum allowable parse errors\n",
+						_max_allowed_errors);
+				abort();
+			}
+		}
 	};
 };
 

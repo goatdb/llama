@@ -37,8 +37,11 @@
 #ifndef LL_LOAD_XSTREAM1_H_
 #define LL_LOAD_XSTREAM1_H_
 
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <cstdio>
 #include <sstream>
+#include <unistd.h>
 
 #include "llama/ll_mem_array.h"
 #include "llama/ll_writable_graph.h"
@@ -90,8 +93,14 @@ public:
 	virtual void load_direct(ll_mlcsr_ro_graph* graph, const char* file,
 			const ll_loader_config* config) {
 
-		xs1_loader loader(file);
-		bool r = loader.load_direct(graph, config);
+		ll_loader_config c;
+		if (config != NULL) c = *config;
+		c.lc_partial_load_part = 0;
+		c.lc_partial_load_num_parts = 0;
+
+		xs1_loader loader(file, config);
+
+		bool r = loader.load_direct(graph, &c);
 		if (!r) abort();
 	}
 
@@ -106,8 +115,14 @@ public:
 	virtual void load_incremental(ll_writable_graph* graph, const char* file,
 			const ll_loader_config* config) {
 
-		xs1_loader loader(file);
-		bool r = loader.load_incremental(graph, config);
+		ll_loader_config c;
+		if (config != NULL) c = *config;
+		c.lc_partial_load_part = 0;
+		c.lc_partial_load_num_parts = 0;
+
+		xs1_loader loader(file, config);
+
+		bool r = loader.load_incremental(graph, &c);
 		if (!r) abort();
 	}
 
@@ -169,6 +184,11 @@ private:
 		size_t _nodes;
 		size_t _edges;
 
+		ll_loader_config _config;
+
+		off_t _start_offset;
+		size_t _edges_loaded;
+
 
 	public:
 
@@ -176,16 +196,45 @@ private:
 		 * Create an instance of class xs1_loader
 		 *
 		 * @param file_name the file name
+		 * @param config the loader config
 		 */
-		xs1_loader(const char* file_name)
+		xs1_loader(const char* file_name, const ll_loader_config* config = NULL)
 			: ll_edge_list_loader<unsigned, true, float, LL_T_FLOAT>() {
 
+			if (config != NULL) {
+				_config = *config;
+
+				if (_config.lc_partial_load_num_parts > 0) {
+					if (_config.lc_partial_load_part <= 0
+							|| (_config.lc_partial_load_part
+								> _config.lc_partial_load_num_parts)) {
+						LL_E_PRINT("The partial load part ID is out of bounds\n");
+						abort();
+					}
+				}
+			}
+
 			_file_name = file_name;
-			_file = fopen(file_name, "rb");
-			if (_file == NULL) {
+			int f = open(file_name, O_RDONLY);
+			if (f < 0) {
 				perror("Cannot open the input file");
 				abort();
 			}
+
+			struct stat st;
+			if (fstat(f, &st) != 0) {
+				perror("Cannot stat the input file");
+				abort();
+			}
+
+			_file = fdopen(f, "rb");
+			if (_file == NULL) {
+				perror("Cannot open the input stream");
+				abort();
+			}
+
+
+			// Stats
 
 			_nodes = 0;
 			_edges = 0;
@@ -219,6 +268,28 @@ private:
 				if (line) free(line);
 				fclose(f_ini);
 			}
+
+			if (_edges <= 0) {
+				_edges = st.st_size / sizeof(xs1);
+			}
+
+
+			// Start/stop offsets
+
+			_edges_loaded = 0;
+
+			if (_config.lc_partial_load_num_parts > 0) {
+				size_t file_edges = _edges;
+				_start_offset = (file_edges * (_config.lc_partial_load_part - 1)
+					/ _config.lc_partial_load_num_parts) * sizeof(xs1);
+				_edges = (file_edges * _config.lc_partial_load_part
+						/ _config.lc_partial_load_num_parts)
+					- (_start_offset / sizeof(xs1));
+				rewind();
+			}
+			else {
+				_start_offset = 0;
+			}
 		}
 
 
@@ -243,14 +314,19 @@ private:
 		virtual bool next_edge(unsigned* o_tail, unsigned* o_head,
 				float* o_weight) {
 
+			if (_edges_loaded >= _edges) return false;
+
 			xs1 e;
 			bool b = xs1_next(_file, &e);
+			if (!b) return false;
+
+			_edges_loaded++;
 
 			*o_tail = e.tail;
 			*o_head = e.head;
 			*o_weight = e.weight;
 
-			return b;
+			return true;
 		}
 
 
@@ -258,7 +334,8 @@ private:
 		 * Rewind the input file
 		 */
 		virtual void rewind() {
-			std::rewind(_file);
+			fseek(_file, _start_offset, SEEK_SET);
+			_edges_loaded = 0;
 		}
 
 
