@@ -330,7 +330,13 @@ inline bool ll_is_type_floating_point(short t) {
 #define LL_PRECOMPUTED_DEGREE
 #define LL_REVERSE_EDGES
 //#define LL_SORT_EDGES
-#define LL_MLCSR_CONTINUATIONS
+
+#ifndef LL_NO_CONTINUATIONS
+#	define LL_MLCSR_CONTINUATIONS
+#endif
+
+//#define LL_MIN_LEVEL
+//#define LL_MLCSR_LEVEL_ID_WRAP
 
 //#define LL_TX
 //#define LL_TIMESTAMPS
@@ -345,6 +351,12 @@ inline bool ll_is_type_floating_point(short t) {
 
 #define WORD_ACCESS_IS_ALREADY_ATOMIC	/* already true for x86 */
 
+#ifdef LL_STREAMING
+#	ifndef LL_ENTRIES_PER_PAGE_BITS
+//#		define LL_ENTRIES_PER_PAGE_BITS	5
+#	endif
+#endif
+
 #ifndef LL_ENTRIES_PER_PAGE_BITS
 #	define LL_ENTRIES_PER_PAGE_BITS		9
 #endif
@@ -355,10 +367,21 @@ inline bool ll_is_type_floating_point(short t) {
 #define LL_D_STRIPE(x)					(((x) >> LL_D_STRIPE_BASE_SHIFT) \
 											& (LL_D_STRIPES - 1))
 
+#if defined(LL_MLCSR_LEVEL_ID_WRAP) && !defined(LL_MIN_LEVEL)
+#	error "LL_MLCSR_LEVEL_ID_WRAP requires LL_MIN_LEVEL"
+#endif
+
+#if defined(LL_MLCSR_LEVEL_ID_WRAP) && defined(LL_PERSISTENCE)
+#	error "LL_MLCSR_LEVEL_ID_WRAP and LL_PERSISTENCE are not compatible"
+#endif
+
 
 //==========================================================================//
 // Adjacency List Helpers                                                   //
 //==========================================================================//
+
+// TODO Need separate deletion vector to support efficient deletion of frozen
+// edges in the writable layer when LL_COPY_ADJ_LIST_ON_DELETION is enabled
 
 /*
  * Adjacency list length
@@ -409,6 +432,14 @@ typedef unsigned length_t;
 #else
 #define IF_LL_MLCSR_CONTINUATIONS(...)
 #define IFE_LL_MLCSR_CONTINUATIONS(t, e) e
+#endif
+
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+#define IF_LL_MLCSR_LEVEL_ID_WRAP(...) __VA_ARGS__
+#define IFE_LL_MLCSR_LEVEL_ID_WRAP(t, e) t
+#else
+#define IF_LL_MLCSR_LEVEL_ID_WRAP(...)
+#define IFE_LL_MLCSR_LEVEL_ID_WRAP(t, e) e
 #endif
 
 #endif

@@ -105,6 +105,13 @@ class ll_mlcsr_ro_graph {
 	/// The _csrs map update lock
 	ll_spinlock_t _csrs_update_lock;
 
+	/// The memory pool for sparse node IDs
+	ll_memory_pool_for_large_allocations* _pool_for_sparse_node_ids;
+
+	/// The memory pool for sparse node data
+	ll_memory_pool_for_large_allocations* _pool_for_sparse_node_data;
+
+
 
 	/*-----------------------------------------------------------------------*
 	 * Properties                                                            *
@@ -189,6 +196,14 @@ public:
 
 		IF_LL_PERSISTENCE(_storage = storage);
 
+		_pool_for_sparse_node_ids = new ll_memory_pool_for_large_allocations();
+		_pool_for_sparse_node_data = new ll_memory_pool_for_large_allocations();
+
+		_out.set_memory_pools_for_sparse_representaion(
+				_pool_for_sparse_node_ids, _pool_for_sparse_node_data);
+		_in.set_memory_pools_for_sparse_representaion(
+				_pool_for_sparse_node_ids, _pool_for_sparse_node_data);
+
 		_csrs[_out.name()] = & _out;
 		_csrs[ _in.name()] = &  _in;
 
@@ -214,6 +229,8 @@ public:
 		for (size_t i = 0; i < csrs.size(); i++) {
 			if (csrs[i] == "out" || csrs[i] == "in") continue;
 			LL_CSR* csr = new LL_CSR(storage, csrs[i].c_str());
+			csr->set_memory_pools_for_sparse_representaion(
+					_pool_for_sparse_node_ids, _pool_for_sparse_node_data);
 			_csrs[csrs[i]] = csr;
 		}
 
@@ -312,6 +329,9 @@ public:
 		_csrs[ _in.name()] = &  _in;
 		_csrs_update_lock = 0;
 
+		_pool_for_sparse_node_ids = master->_pool_for_sparse_node_ids;
+		_pool_for_sparse_node_data = master->_pool_for_sparse_node_data;
+
 		for (auto it = master->_csrs.begin(); it != master->_csrs.end(); it++){
 			if (it->second == NULL
 					|| it->second == &master->_out
@@ -403,6 +423,13 @@ public:
 		for (auto it = _edge_properties_64.begin();
 				it != _edge_properties_64.end(); it++) {
 			if (it->second != NULL) delete it->second;
+		}
+
+		if (_master == NULL) {
+			_out.set_memory_pools_for_sparse_representaion(NULL, NULL);
+			_in.set_memory_pools_for_sparse_representaion(NULL, NULL);
+			delete _pool_for_sparse_node_ids;
+			delete _pool_for_sparse_node_data;
 		}
 	}
 
@@ -510,6 +537,8 @@ public:
 		}
 
 		LL_CSR* csr = new LL_CSR(IF_LL_PERSISTENCE(this->_storage,) name);
+		csr->set_memory_pools_for_sparse_representaion(
+				_pool_for_sparse_node_ids, _pool_for_sparse_node_data);
 		_csrs[name] = csr;
 
 		ll_spinlock_release(&_csrs_update_lock);
@@ -549,6 +578,28 @@ public:
 #	endif
 
 		ll_spinlock_release(&_csrs_update_lock);
+
+		ll_with(auto p = this->get_all_node_properties_32()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				it->second->set_min_level(m);
+			}
+		}
+		ll_with(auto p = this->get_all_node_properties_64()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				it->second->set_min_level(m);
+			}
+		}
+
+		ll_with(auto p = this->get_all_edge_properties_32()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				it->second->set_min_level(m);
+			}
+		}
+		ll_with(auto p = this->get_all_edge_properties_64()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				it->second->set_min_level(m);
+			}
+		}
 	}
 #endif
 	
@@ -1254,11 +1305,17 @@ public:
 		std::string s = name;
 		auto it = _edge_properties_32.find(s);
 		if (it != _edge_properties_32.end()) return NULL;
-		if (_next_node_property_id >= LL_MAX_EDGE_PROPERTY_ID - 4) return NULL;
+
+		int id = _next_edge_property_id++;
+		if (id >= LL_MAX_EDGE_PROPERTY_ID) {
+			_next_edge_property_id--;	// XXX Race condition?
+			LL_E_PRINT("Too many edge properties");
+			return NULL;
+		}
 
 		ll_mlcsr_edge_property<uint32_t>* p
 			= new ll_mlcsr_edge_property<uint32_t>(
-					IF_LL_PERSISTENCE(_storage,) _next_edge_property_id++,
+					IF_LL_PERSISTENCE(_storage,) id,
 					name, type, NULL,
 					_out.edge_property_level_creation_callback_32());
 		_edge_properties_32[s] = p;
@@ -1312,11 +1369,17 @@ public:
 		std::string s = name;
 		auto it = _edge_properties_64.find(s);
 		if (it != _edge_properties_64.end()) return NULL;
-		if (_next_node_property_id >= LL_MAX_EDGE_PROPERTY_ID - 4) return NULL;
+
+		int id = _next_edge_property_id++;
+		if (id >= LL_MAX_EDGE_PROPERTY_ID) {
+			_next_edge_property_id--;	// XXX Race condition?
+			LL_E_PRINT("Too many edge properties");
+			return NULL;
+		}
 
 		ll_mlcsr_edge_property<uint64_t>* p
 			= new ll_mlcsr_edge_property<uint64_t>(
-					IF_LL_PERSISTENCE(_storage,) _next_edge_property_id++,
+					IF_LL_PERSISTENCE(_storage,) id,
 					name, type, destructor,
 					_out.edge_property_level_creation_callback_64());
 		_edge_properties_64[s] = p;
@@ -1447,6 +1510,8 @@ public:
 
 		config->assert_features(false /*direct*/, true /*error*/, features);
 
+		// TODO Apply deletions for LL_TIMESTAMPS
+
 
 		// Initialize
 
@@ -1456,6 +1521,14 @@ public:
 		assert((node_t) num_total_nodes >= _out.max_nodes());
 
 		ll_w_vt_vertices_t* vt = source->vertex_table();
+
+
+		// There is an issue pertaining to LL_COPY_ADJ_LIST__LARGE (and probably also
+		// __SMALL) in which a node's adj. list switches from being copied to differences
+		// esp. due to deletions.
+		//
+		// This now works with the STOP_HERE flag and either ADJ_LIST_LENGTH
+		// or COPY_ADJ_LIST_ON_DELETION.
 
 
 		// Construct the new_degrees and nodes_with_new_edges arrays
@@ -1474,7 +1547,7 @@ public:
 
 #		pragma omp parallel
 		{
-#			pragma omp for schedule(dynamic,4096)
+#			pragma omp for schedule(static,4096)
 			for (size_t p = 0; p < vt->num_pages(); p++) {
 				if (!vt->page_with_contents(p)) continue;
 				node_t n = p * vt->num_entries_per_page();
@@ -1505,14 +1578,12 @@ public:
 
 		// (Note that this should work even if we already called writable_init().)
 
-		{
-			auto p = this->get_all_edge_properties_32();
+		ll_with(auto p = this->get_all_edge_properties_32()) {
 			for (auto it = p.begin(); it != p.end(); it++) {
 				it->second->cow_init_level(_out.max_edges(level));
 			}
 		}
-		{
-			auto p = this->get_all_edge_properties_64();
+		ll_with(auto p = this->get_all_edge_properties_64()) {
 			for (auto it = p.begin(); it != p.end(); it++) {
 				it->second->cow_init_level(_out.max_edges(level));
 			}
@@ -1705,15 +1776,15 @@ public:
 				if (!it->second->writable())
 					it->second->writable_init(num_total_nodes);
 				it->second->freeze(num_total_nodes);
-				/*if (it->second->num_levels() != _out.num_levels()) {
+				if (it->second->max_level() != _out.max_level()) {
 					fflush(stdout);
 					fprintf(stderr, "\nASSERT FAILED: Node property checkpoint "
 							"for '%s': %d level(s), %d expected\n",
-							it->first.c_str(), it->second->num_levels(),
-							_out.num_levels());
+							it->first.c_str(), it->second->max_level(),
+							_out.max_level());
 					exit(1);
-				}*/
-				assert(it->second->num_levels() == _out.num_levels());
+				}
+				assert(it->second->max_level() == _out.max_level());
 			}
 		}
 		{
@@ -1722,7 +1793,7 @@ public:
 				if (!it->second->writable())
 					it->second->writable_init(num_total_nodes);
 				it->second->freeze(num_total_nodes);
-				assert(it->second->num_levels() == _out.num_levels());
+				assert(it->second->max_level() == _out.max_level());
 			}
 		}
 
@@ -1736,7 +1807,15 @@ public:
 					it->second->freeze();
 				else
 					it->second->cow_finish_level();
-				assert(it->second->num_levels() == _out.num_levels());
+				if (it->second->max_level() != _out.max_level()) {
+					fflush(stdout);
+					fprintf(stderr, "\nASSERT FAILED: Edge property checkpoint "
+							"for '%s': %d level(s), %d expected\n",
+							it->first.c_str(), it->second->max_level(),
+							_out.max_level());
+					exit(1);
+				}
+				assert(it->second->max_level() == _out.max_level());
 			}
 		}
 		{
@@ -1746,7 +1825,7 @@ public:
 					it->second->freeze();
 				else
 					it->second->cow_finish_level();
-				assert(it->second->num_levels() == _out.num_levels());
+				assert(it->second->max_level() == _out.max_level());
 			}
 		}
 	}
@@ -1792,6 +1871,51 @@ public:
 		ll_with(auto p = this->get_all_edge_properties_64()) {
 			for (auto it = p.begin(); it != p.end(); it++) {
 				it->second->delete_level(level);
+			}
+		}
+	}
+
+
+	/**
+	 * Delete all old versions except the specified number of most recent levels
+	 *
+	 * @param keep the number of levels to keep
+	 */
+	void keep_only_recent_versions(size_t keep) {
+
+		// Delete structure levels
+
+		for (auto it = _csrs.begin(); it != _csrs.end(); it++) {
+			if (it->second->num_levels() >= keep) {
+				it->second->keep_only_recent_versions(keep);
+			}
+		}
+
+
+		// Delete node property levels
+
+		ll_with(auto p = this->get_all_node_properties_32()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				it->second->keep_only_recent_levels(keep);
+			}
+		}
+		ll_with(auto p = this->get_all_node_properties_64()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				it->second->keep_only_recent_levels(keep);
+			}
+		}
+
+
+		// Delete edge property levels
+
+		ll_with(auto p = this->get_all_edge_properties_32()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				it->second->keep_only_recent_levels(keep);
+			}
+		}
+		ll_with(auto p = this->get_all_edge_properties_64()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				it->second->keep_only_recent_levels(keep);
 			}
 		}
 	}

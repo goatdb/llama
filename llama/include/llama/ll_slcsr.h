@@ -250,7 +250,7 @@ public:
 		ll_slcsr__begin_t b;
 		b.adj_list_start = index; //this->_max_edges;
 
-		this->_level0_begin->dense_direct_write(this->_max_nodes, b);
+		this->_latest_begin->dense_direct_write(this->_max_nodes, b);
 		this->_perLevelEdges[this->_perLevelEdges.size()-1] = index;
 	}
 
@@ -273,8 +273,8 @@ public:
 	 * @return the degree
 	 */
 	size_t degree(node_t n) const {
-		edge_t e = (*this->_level0_begin)[n].adj_list_start;
-		return (*this->_level0_begin)[n+1].adj_list_start - e;
+		edge_t e = (*this->_latest_begin)[n].adj_list_start;
+		return (*this->_latest_begin)[n+1].adj_list_start - e;
 	}
 
 
@@ -305,13 +305,13 @@ public:
 
 		iter.owner = LL_I_OWNER_RO_CSR;
 		iter.node = n;
-		iter.edge = (*this->_level0_begin)[n].adj_list_start;
-		iter.left = (*this->_level0_begin)[n+1].adj_list_start - iter.edge;
-		iter.ptr = &(*this->_level0_values)[iter.edge];
+		iter.edge = (*this->_latest_begin)[n].adj_list_start;
+		iter.left = (*this->_latest_begin)[n+1].adj_list_start - iter.edge;
+		iter.ptr = &(*this->_latest_values)[iter.edge];
 
 		LL_D_NODE_PRINT(n, "[left=%ld, edge=%lx, n_edge=%lx]\n",
 				(long) iter.left, (long) iter.edge,
-				(long) (*this->_level0_begin)[n+1].adj_list_start);
+				(long) (*this->_latest_begin)[n+1].adj_list_start);
 	}
 
 
@@ -338,7 +338,7 @@ public:
 
 		if (iter.left > 0) {
 			iter.left--;
-        	iter.last_node = (*this->_level0_values)[iter.edge];
+        	iter.last_node = (*this->_latest_values)[iter.edge];
 			return iter.edge++;
 		}
 		else {
@@ -371,10 +371,11 @@ public:
 	 * @param n the node
 	 * @param level the level (must be 0)
 	 * @param max_level the maximum visible level for deletions (must be <= 0)
+	 * @param vte the vertex table element (ignored)
 	 * @return the iterator
 	 */
 	void iter_begin_within_level(ll_edge_iterator& iter, node_t n,
-			int level, int max_level=-1) const {
+			int level, int max_level=-1, void* vte=NULL) const {
 		assert(level <= 0 && max_level <= 0);
 		iter_begin(iter, n);
 	}

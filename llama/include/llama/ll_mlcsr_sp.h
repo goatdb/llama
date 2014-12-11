@@ -113,8 +113,11 @@ protected:
 	
 #ifdef LL_MIN_LEVEL
 	/// The minimum level to consider
-	edge_t _minLevel;
+	int _minLevel;
 #endif
+
+	/// The maximum level to consider
+	int _maxLevel;
 
 	/// The per-level number of nodes
 	std::vector<node_t> _perLevelNodes;
@@ -131,12 +134,10 @@ protected:
 	/// The vertex table for each level: node ID --> adjacency list begins
 	LL_VT_COLLECTION<VT_TABLE<VT_ELEMENT>, VT_ELEMENT> _begin;
 	VT_TABLE<VT_ELEMENT>* _latest_begin;
-	VT_TABLE<VT_ELEMENT>* _level0_begin;
 
 	/// The edge table for each level: edge ID --> the associated value
 	std::vector<LL_ET<T>*> _values;
 	LL_ET<T>* _latest_values;
-	LL_ET<T>* _level0_values;
 
 	/// The edge translation property
 	ll_mlcsr_edge_property<edge_t> _edge_translation;
@@ -157,6 +158,21 @@ protected:
 
 	/// For use during initialization: Caller-provided data for the callback
 	void* _copy_edge_callback_data;
+
+	/// The vertex IDs for the sparse column-store like representation
+	std::vector<node_t*> _sparse_node_ids;
+
+	/// The vertex data for the sparse column-store like representation
+	std::vector<VT_ELEMENT*> _sparse_node_data;
+
+	/// The length of the arrays for the sparse column-store like representation
+	std::vector<size_t> _sparse_length;
+
+	/// The memory pool for sparse node IDs
+	ll_memory_pool_for_large_allocations* _pool_for_sparse_node_ids;
+
+	/// The memory pool for sparse node data
+	ll_memory_pool_for_large_allocations* _pool_for_sparse_node_data;
 
 
 public:
@@ -189,16 +205,19 @@ public:
 
 		_deletions = NULL;
 
-		_level0_begin = NULL;
 		_latest_begin = NULL;
-		_level0_values = NULL;
 		_latest_values = NULL;
+
+		_pool_for_sparse_node_ids = NULL;
+		_pool_for_sparse_node_data = NULL;
 
 		_has_edge_translation = edge_translation;
 
 #ifdef LL_MIN_LEVEL
 		_minLevel = 0;
 #endif
+
+		_maxLevel = -1;
 
 #ifdef LL_PERSISTENCE
 		for (size_t l = 0; l < _begin.size(); l++) {
@@ -213,19 +232,21 @@ public:
 
 			_values.push_back(NULL);
 
-			b.set_edge_table_ptr(&_values[_values.size()-1]);
-			_latest_values = _values[_values.size()-1];
+			_maxLevel = _values.size()-1;
+			b.set_edge_table_ptr(&_values[_maxLevel]);
+			_latest_values = _values[_maxLevel];
 
 			size_t edges = b.edges();
 			_perLevelEdges.push_back(edges);
 			_max_edges = edges;
+
+			_sparse_node_ids.push_back(NULL);
+			_sparse_node_data.push_back(NULL);
+			_sparse_length.push_back(0);
 		}
 
-		if (!_values.empty()) _level0_values = _values[0];
-		if (!_begin.empty()) _level0_begin = _begin[0];
-
 		_has_edge_translation = _begin.size() == 0
-			? edge_translation : _edge_translation.num_levels() > 0;
+			? edge_translation : _edge_translation.max_level_id() >= 0;
 #endif
 	}
 
@@ -243,10 +264,6 @@ public:
 
 		_master = master;
 
-		if (level < 0) level = 0;
-		if (level >= (int) master->num_levels())
-			level = (int) master->num_levels() - 1;
-
 		_name = master->_name;
 		_deletions = master->_deletions;
 		_has_edge_translation = master->_has_edge_translation;
@@ -255,23 +272,35 @@ public:
 		_minLevel = master->_minLevel;
 #endif
 
+		_maxLevel = master->_maxLevel;
+
 		_et_write_index = 0;
 		_copy_edge_callback = NULL;
 		_copy_edge_callback_data = NULL;
 
+		_pool_for_sparse_node_ids = master->_pool_for_sparse_node_ids;
+		_pool_for_sparse_node_data = master->_pool_for_sparse_node_data;
+
 		if (master->num_levels() > 0) {
+
+			// XXX Wrap
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+#	error "Not implemented"
+#endif
 
 			for (int i = 0; i <= level; i++) {
 				_perLevelNodes.push_back(master->_perLevelNodes[i]);
 				_perLevelAdjLists.push_back(master->_perLevelAdjLists[i]);
 				_perLevelEdges.push_back(master->_perLevelEdges[i]);
 				_values.push_back(master->_values[i]);
+
+				_sparse_node_ids.push_back(master->_sparse_node_ids[i]);
+				_sparse_node_data.push_back(master->_sparse_node_data[i]);
+				_sparse_length.push_back(master->_sparse_length[i]);
 			}
 
-			_latest_begin = _begin[_begin.size() - 1];
-			_level0_begin = _begin[0];
+			_latest_begin = _begin.latest_level();
 			_latest_values = _values[_values.size() - 1];
-			_level0_values = _values[0];
 
 			_max_nodes = _perLevelNodes[level];
 			_max_edges = _perLevelEdges[level];
@@ -279,9 +308,7 @@ public:
 		else {
 
 			_latest_begin = NULL;
-			_level0_begin = NULL;
 			_latest_values = NULL;
-			_level0_values = NULL;
 
 			_max_nodes = 0;
 			_max_edges = 0;
@@ -298,6 +325,20 @@ public:
 		
 		for (size_t l = 0; l < _values.size(); l++) {
 			if (_values[l] != NULL) DELETE_LL_ET<T>(_values[l]);
+		}
+		
+		if (_pool_for_sparse_node_ids != NULL) {
+			for (size_t l = 0; l < _sparse_node_ids.size(); l++) {
+				if (_sparse_node_ids[l] != NULL)
+					_pool_for_sparse_node_ids->free(_sparse_node_ids[l]);
+			}
+		}
+		
+		if (_pool_for_sparse_node_data != NULL) {
+			for (size_t l = 0; l < _sparse_node_data.size(); l++) {
+				if (_sparse_node_data[l] != NULL)
+					_pool_for_sparse_node_data->free(_sparse_node_data[l]);
+			}
 		}
 	}
 
@@ -320,7 +361,7 @@ public:
 	 */
 	inline VT_TABLE<VT_ELEMENT>* vertex_table(size_t level) {
 #ifdef FORCE_L0
-		return _level0_begin;
+		return _latest_begin;
 #else
 		return _begin[level];
 #endif
@@ -335,10 +376,32 @@ public:
 	 */
 	inline const VT_TABLE<VT_ELEMENT>* vertex_table(size_t level) const {
 #ifdef FORCE_L0
-		return _level0_begin;
+		return _latest_begin;
 #else
 		return _begin[level];
 #endif
+	}
+
+
+	/**
+	 * Get the appropriate _begin data structure prior to the given level
+	 *
+	 * @param level the level
+	 * @return the data structure
+	 */
+	inline VT_TABLE<VT_ELEMENT>* prev_vertex_table(size_t level) {
+		return _begin.prev_level(level);
+	}
+
+
+	/**
+	 * Get the appropriate _begin data structure prior to the given level
+	 *
+	 * @param level the level
+	 * @return the data structure
+	 */
+	inline const VT_TABLE<VT_ELEMENT>* prev_vertex_table(size_t level) const {
+		return _begin.prev_level(level);
 	}
 
 
@@ -370,7 +433,7 @@ public:
 	 */
 	inline LL_ET<T>* edge_table(size_t level) {
 #ifdef FORCE_L0
-		return _level0_values;
+		return _latest_values;
 #else
 		return _values[level];
 #endif
@@ -385,7 +448,7 @@ public:
 	 */
 	inline const LL_ET<T>* edge_table(size_t level) const {
 #ifdef FORCE_L0
-		return _level0_values;
+		return _latest_values;
 #else
 		return _values[level];
 #endif
@@ -425,6 +488,17 @@ public:
 	
 
 #ifdef LL_MIN_LEVEL
+
+	/**
+	 * Get the min level
+	 *
+	 * @return the minimum level to consider
+	 */
+	inline int min_level() const {
+		return _minLevel;
+	}
+
+
 	/**
 	 * Set the minimum level to consider
 	 *
@@ -438,8 +512,21 @@ public:
 
 		assert((int) _minLevel <= (int) m);
 		_minLevel = m;
+
+		_begin.set_min_level(_minLevel);
 	}
+
 #endif
+
+
+	/**
+	 * Get the max level
+	 *
+	 * @return the minimum level to consider
+	 */
+	inline int max_level() const {
+		return _maxLevel;
+	}
 	
 
 	/**
@@ -540,11 +627,47 @@ public:
 			void* copy_edge_callback_data = NULL,
 			int level=-1) {
 
+
+		// Initialize
+
 		this->_copy_edge_callback = copy_edge_callback;
 		this->_copy_edge_callback_data = copy_edge_callback_data;
 		this->_et_write_index = 0;
 
-		if (level == -1) level = this->_begin.size();
+#ifdef _DEBUG
+		if (level != -1) {
+			LL_W_PRINT("Creating a new level with a prespecified ID %d\n",
+					level);
+		}
+#endif
+
+
+		// Get the new level ID and create space for it in the vectors
+
+		if (level == -1) level = this->_begin.next_level_id();
+
+		while ((ssize_t) this->_values.size() <= level)
+			this->_values.push_back(NULL);
+		while ((ssize_t) this->_perLevelNodes.size() <= level)
+			this->_perLevelNodes.push_back(0);
+		while ((ssize_t) this->_perLevelAdjLists.size() <= level)
+			this->_perLevelAdjLists.push_back(0);
+		while ((ssize_t) this->_perLevelEdges.size() <= level)
+			this->_perLevelEdges.push_back(0);
+		while ((ssize_t) this->_sparse_node_ids.size() <= level)
+			this->_sparse_node_ids.push_back(NULL);
+		while ((ssize_t) this->_sparse_node_data.size() <= level)
+			this->_sparse_node_data.push_back(NULL);
+		while ((ssize_t) this->_sparse_length.size() <= level)
+			this->_sparse_length.push_back(0);
+
+		assert(this->_values[level] == NULL);
+		assert(this->_begin.max_level() == this->_maxLevel);
+
+		this->_maxLevel = level;
+
+
+		// Create the edge table
 
 		size_t et_capacity = values_length(level, max_nodes + 4,
 				max_adj_lists + 4, max_edges);
@@ -555,30 +678,35 @@ public:
 			abort();
 		}
 #endif
-		this->_values.push_back(et);
+
+		this->_values[level] = et;
+
+
+		// Create and begin initialization of the vertex table. Note that this
+		// would modify this->_values[level] under LL_PERSISTENCE
 
 		auto* b = this->_begin.new_level(max_nodes);
 #ifdef LL_PERSISTENCE
-		if (level == 0)
+		if (this->_begin.count_existing_levels() == 1)
 			b->dense_init(&this->_values[level], et_capacity);
 		else
 			b->cow_init(&this->_values[level], et_capacity);
 #else
-		if (level == 0)
+		if (this->_begin.count_existing_levels() == 1)
 			b->dense_init();
 		else
 			b->cow_init();
 #endif
 
-		this->_latest_begin = this->_begin[this->_begin.size() - 1];
-		this->_level0_begin = this->_begin[0];
+		this->_latest_begin = this->_begin.latest_level();
+		this->_latest_values = et = this->_values[level];
+		
 
-		this->_latest_values = this->_values[this->_values.size() - 1];
-		this->_level0_values = this->_values[0];
+		// Remember the important parameters
 
-		this->_perLevelNodes.push_back(max_nodes);
-		this->_perLevelAdjLists.push_back(max_adj_lists);
-		this->_perLevelEdges.push_back(max_edges);
+		this->_perLevelNodes[level] = max_nodes;
+		this->_perLevelAdjLists[level] = max_adj_lists;
+		this->_perLevelEdges[level] = max_edges;
 
 		this->_max_nodes = max_nodes;
 		this->_max_edges = max_edges;
@@ -660,8 +788,7 @@ public:
 		int level = this->_begin.size() - 1;
 		auto* vt = this->_begin[level];
 
-		assert(this->_latest_values == this->_values[this->_values.size() - 1]);
-		assert(this->_level0_values == this->_values[0]);
+		assert(this->_latest_values == this->_values[this->_maxLevel]);
 
 		VT_ELEMENT e;
 		memset(&e, 0, sizeof(e));
@@ -676,7 +803,7 @@ public:
 			vt->dense_finish();
 		}
 
-		this->_perLevelEdges[this->_perLevelEdges.size()-1] = this->_et_write_index;
+		this->_perLevelEdges[this->_maxLevel] = this->_et_write_index;
 		this->_max_edges = this->_et_write_index;
 	}
 
@@ -686,12 +813,11 @@ public:
 	 */
 	virtual void finish_level_edges() {
 		
-		assert(this->_latest_begin == this->_begin[this->_begin.size() - 1]);
+		assert(this->_latest_begin == this->_begin.latest_level());
 
 #ifdef LL_PERSISTENCE
 		this->_latest_begin->finish_level_edges();
 		this->_latest_values = this->_values[this->_values.size() - 1];
-		this->_level0_values = this->_values[0];
 #endif
 	}
 
@@ -798,7 +924,7 @@ public:
 			if (LL_VALUE_MAX_LEVEL(value) == num_levels() && _deletions != NULL) {
 				// We might get here even if the edge was deleted BEFORE the writable
 				// level, but we don't care - the result will be correct nonetheless
-				return I_deletions->is_edge_deleted(iter.edge);
+				return _deletions->is_edge_deleted(iter.edge);
 			}
 #	else
 			return false;
@@ -835,6 +961,8 @@ public:
 	 */
 	void delete_level(size_t level) {
 
+		LL_D_PRINT("[%s] level=%lu\n", this->name(), level);
+
 		assert(level >= 0);
 #ifdef LL_MIN_LEVEL
 		assert(level + 1 < (size_t) _minLevel);
@@ -855,9 +983,213 @@ public:
 			this->_perLevelEdges[level] = 0;
 		}
 
-		if (level < _edge_translation.num_levels()) {
+		if (level < this->_sparse_node_ids.size()) {
+
+			if (this->_sparse_node_ids[level] != NULL)
+				_pool_for_sparse_node_ids->free(_sparse_node_ids[level]);
+				//free(this->_sparse_node_ids[level]);
+
+			if (this->_sparse_node_data[level] != NULL)
+				_pool_for_sparse_node_data->free(_sparse_node_data[level]);
+				//free(this->_sparse_node_data[level]);
+
+			this->_sparse_node_ids[level] = NULL;
+			this->_sparse_node_data[level] = NULL;
+			this->_sparse_length[level] = 0;
+		}
+
+		if (_edge_translation.level_exists(level)) {
 			_edge_translation.delete_level(level);
 		}
+	}
+
+
+	/**
+	 * Delete all old versions except the specified number of most recent levels
+	 *
+	 * @param keep the number of levels to keep
+	 */
+	void keep_only_recent_versions(size_t keep) {
+
+		// We can drop old vertex tables only if we know for sure they would
+		// not be needed to access the most recent versions of the data
+
+#if defined(LL_MLCSR_CONTINUATIONS)
+
+#ifdef LL_MIN_LEVEL
+		// We need to keep the sparse representations for set_min_level() to
+		// work properly
+		for (int l = 0; l <= ((int) max_level()) - (int) keep; l++) {
+			this->create_sparse_representation(l);
+		}
+#endif
+
+		this->_begin.keep_only_recent_levels(keep);
+#endif
+
+		this->_edge_translation.keep_only_recent_levels(keep);
+	}
+
+
+	/**
+	 * Set memory pools for sparse data
+	 *
+	 * @param pool_ids the pool for the IDs
+	 * @param pool_data the pool for the data
+	 */
+	void set_memory_pools_for_sparse_representaion(
+			ll_memory_pool_for_large_allocations* pool_ids,
+			ll_memory_pool_for_large_allocations* pool_data) {
+
+		_pool_for_sparse_node_ids = pool_ids;
+		_pool_for_sparse_node_data = pool_data;
+	}
+
+
+	/**
+	 * Generate the sparse vertex table representation for the given level
+	 *
+	 * @param level the level
+	 */
+	void create_sparse_representation(int level) {
+
+		if (!this->_begin.level_exists(level)) return;
+		if (this->_sparse_node_ids[level] != NULL) return;
+
+		auto vt = vertex_table(level);
+
+		size_t length = 0;
+		ssize_t size = vt->size();
+		ssize_t pages = vt->pages();
+
+		size_t nt = omp_get_max_threads();
+		size_t lengths[nt];
+
+#		pragma omp parallel
+		{
+			size_t l = 0;
+			ssize_t t = omp_get_thread_num();
+			ssize_t ts = ((pages-1) * t) / nt;
+			ssize_t te = std::min<ssize_t>((ssize_t) pages-1,
+					(ssize_t) ((pages-1) * (t+1)) / nt);
+
+			for (ssize_t p = ts; p < te; p++) {
+				VT_ELEMENT* page = vt->page(p);
+				for (ssize_t i = 0; i < LL_ENTRIES_PER_PAGE; i++) {
+					if ((int) LL_EDGE_LEVEL(page[i].adj_list_start) == level) {
+						l++;
+					}
+				}
+			}
+
+			lengths[t] = l;
+			ATOMIC_ADD<size_t>(&length, l);
+		}
+
+		size_t tail_index = length;
+		if (pages > 0) {
+			VT_ELEMENT* page = vt->page(pages-1);
+			for (ssize_t i = 0; i < size - pages * LL_ENTRIES_PER_PAGE; i++) {
+				if ((int) LL_EDGE_LEVEL(page[i].adj_list_start) == level) {
+					length++;
+				}
+			}
+		}
+
+		/*node_t* ids = (node_t*) malloc(sizeof(node_t) * length);
+		VT_ELEMENT* data = (VT_ELEMENT*) malloc(sizeof(VT_ELEMENT) * length);
+		if (ids == NULL || data == NULL) {
+			LL_E_PRINT("** out of memory ** need space for %lu vertives\n", length);
+			abort();
+		}*/
+
+		node_t* ids = (node_t*) _pool_for_sparse_node_ids->allocate(
+				sizeof(node_t) * length);
+		VT_ELEMENT* data = (VT_ELEMENT*) _pool_for_sparse_node_data->allocate(
+				sizeof(VT_ELEMENT) * length);
+
+#		pragma omp parallel
+		{
+			ssize_t t = omp_get_thread_num();
+			ssize_t ts = ((pages-1) * t) / nt;
+			ssize_t te = std::min<ssize_t>((ssize_t) pages-1,
+					(ssize_t) ((pages-1) * (t+1)) / nt);
+
+			size_t index = 0;
+			for (ssize_t i = 0; i < t; i++) index += lengths[i];
+
+			for (ssize_t p = ts; p < te; p++) {
+				VT_ELEMENT* page = vt->page(p);
+				node_t n = p << LL_ENTRIES_PER_PAGE_BITS;
+				for (ssize_t i = 0; i < LL_ENTRIES_PER_PAGE; i++, n++) {
+					if ((int) LL_EDGE_LEVEL(page[i].adj_list_start) == level) {
+						ids[index] = n;
+						data[index] = page[i];
+						index++;
+					}
+				}
+			}
+		}
+		if (pages > 0) {
+			VT_ELEMENT* page = vt->page(pages-1);
+			node_t n = (pages-1) << LL_ENTRIES_PER_PAGE_BITS;
+			for (ssize_t i = 0; i < size - pages * LL_ENTRIES_PER_PAGE; i++, n++) {
+				if ((int) LL_EDGE_LEVEL(page[i].adj_list_start) == level) {
+					ids[tail_index] = n;
+					data[tail_index] = page[i];
+					tail_index++;
+				}
+			}
+		}
+
+		this->_sparse_length[level] = length;
+		this->_sparse_node_ids[level] = ids;
+		this->_sparse_node_data[level] = data;
+	}
+
+
+	/**
+	 * Determine if the given level has a sparse representation
+	 *
+	 * @param level the level
+	 * @return true if it has the sparse representation
+	 */
+	bool has_sparse_representation(int level) const {
+		if (level < 0 || level >= (int) this->_sparse_node_ids.size()) return false;
+		return this->_sparse_node_ids[level] != NULL;
+	}
+
+
+	/**
+	 * Get the length associated with the given sparse representation
+	 *
+	 * @param level the level
+	 * @return the length
+	 */
+	size_t sparse_length(int level) const {
+		return this->_sparse_length[level];
+	}
+
+
+	/**
+	 * Get the node IDs associated with the given sparse representation
+	 *
+	 * @param level the level
+	 * @return the corresponding column array
+	 */
+	const node_t* sparse_node_ids(int level) const {
+		return this->_sparse_node_ids[level];
+	}
+
+
+	/**
+	 * Get the node data associated with the given sparse representation
+	 *
+	 * @param level the level
+	 * @return the corresponding column array
+	 */
+	const VT_ELEMENT* sparse_node_data(int level) const {
+		return this->_sparse_node_data[level];
 	}
 
 
@@ -1042,6 +1374,8 @@ public:
 	 */
 	size_t init_node(node_t node, size_t new_edges, size_t deleted_edges) {
 
+		// XXX level comparisons do not work with LL_MLCSR_LEVEL_ID_WRAP
+
 		int level = this->_begin.size() - 1;
 		auto* vt = this->_begin[level];
 
@@ -1130,7 +1464,7 @@ public:
 		// Write the continuation record marking where the adjacency list
 		// continues for levels > 0 if the following conditions are met:
 		//   * LL_MLCSR_CONTINUATIONS is enabled
-		//   * Level > 0
+		//   * If this is not the very first level (Level > 0 in most cases)
 		//   * The adjacency list resides in this level
 		//   * The adjacency list is not copied
 		// If the adjacency list is copied, write the NULL record.
@@ -1138,14 +1472,15 @@ public:
 		size_t delta_edges = new_edges;
 
 #ifdef LL_MLCSR_CONTINUATIONS
-		if (level > 0 && e.adj_list_start != LL_NIL_EDGE) {
+		if (IFE_LL_MLCSR_LEVEL_ID_WRAP(this->_begin.has_prev_level(level), level > 0)
+				&& e.adj_list_start != LL_NIL_EDGE) {
 			size_t t = this->_et_write_index + delta_edges;
 			T* ptr = this->_latest_values->edge_ptr(node, t);
-			LL_XD_PRINT("%4ld) e=%lu wp=%lu\n", node,
+			LL_XD_PRINT("%4ld) e=%lu wp=%lu, no copy\n", node,
 					(size_t) new_edges, t);
-			if (node < (node_t) this->vertex_table(level-1)->size()) {
-				const ll_mlcsr_core__begin_t& bprev
-					= (*this->vertex_table(level-1))[node];
+			auto prev = this->_begin.prev_level(level);
+			if (node < (node_t) prev->size()) {
+				const ll_mlcsr_core__begin_t& bprev = (*prev)[node];
 				*((ll_mlcsr_core__begin_t*) (void*) ptr) = bprev;
 			}
 			else {
@@ -1259,8 +1594,7 @@ public:
 
 		// Initialize each node
 
-		size_t node;
-		for (node = 0; node < max_nodes; node++) {
+		for (size_t node = 0; node < max_nodes; node++) {
 			size_t deleted = level == 0 || deleted_edge_counts == NULL
 				? 0 : deleted_edge_counts[node];
 			init_node(node, new_edge_counts[node], deleted);
@@ -1320,26 +1654,34 @@ public:
 		size_t start = LL_EDGE_INDEX((*this->_latest_begin)[node].adj_list_start);
 		size_t level = LL_EDGE_LEVEL((*this->_latest_begin)[node].adj_list_start);
 
-		for (size_t i = 0; i < adj_list.size(); i++) {
-			w_edge* e = adj_list[i];
-			if (e->exists()) {
-				this->_latest_values->edge_value(node, start)
-					= LL_VALUE_CREATE(e->we_target);
-				e->we_numerical_id = LL_EDGE_CREATE(level, start);
-				start++;
+		//for (size_t i = 0; i < adj_list.size(); i++) {
+		//	w_edge* e = adj_list[i];
+
+		size_t n = adj_list.block_count();
+		for (size_t b = 0; b < n; b++) {
+			w_edge* const* l = adj_list.block(b);
+			size_t m = adj_list.block_size(b);
+			for (size_t i = 0; i < m; i++, l++) {
+				w_edge* e = *l;
+
+				if (e->exists()) {
+					this->_latest_values->edge_value(node, start)
+						= LL_VALUE_CREATE(e->we_target);
+					e->we_numerical_id = LL_EDGE_CREATE(level, start);
+					start++;
 
 #ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
-				if (e->we_supersedes != LL_NIL_EDGE) {
-					assert(LL_EDGE_LEVEL(e->we_supersedes) < level);
-					assert(forward_pointers->get(e->we_supersedes) == 0);
+					if (e->we_supersedes != LL_NIL_EDGE) {
+						assert(LL_EDGE_LEVEL(e->we_supersedes) < level);
 
 					forward_pointers->cow_write(e->we_supersedes,
 							e->we_numerical_id);
 
-					//LL_D_PRINT("%lx --> %lx\n", e->we_supersedes,
-							//e->we_numerical_id);
-				}
+						//LL_D_PRINT("%lx --> %lx\n", e->we_supersedes,
+								//e->we_numerical_id);
+					}
 #endif
+				}
 			}
 		}
 	}
@@ -1354,19 +1696,110 @@ public:
 	virtual void write_values(node_t node, const ll_w_in_edges_t& adj_list) {
 		size_t start = LL_EDGE_INDEX((*this->_latest_begin)[node].adj_list_start);
 		size_t level = LL_EDGE_LEVEL((*this->_latest_begin)[node].adj_list_start);
-		for (size_t i = 0; i < adj_list.size(); i++) {
-			w_edge* e = adj_list[i];
-			if (e->exists()) {
-				this->_latest_values->edge_value(node, start)
-					= LL_VALUE_CREATE(e->we_source);
-				e->we_reverse_numerical_id = LL_EDGE_CREATE(level, start);
-				start++;
+
+		size_t n = adj_list.block_count();
+		for (size_t b = 0; b < n; b++) {
+			w_edge* const* l = adj_list.block(b);
+			size_t m = adj_list.block_size(b);
+			for (size_t i = 0; i < m; i++, l++) {
+				w_edge* e = *l;
+
+				if (e->exists()) {
+					this->_latest_values->edge_value(node, start)
+						= LL_VALUE_CREATE(e->we_source);
+					e->we_reverse_numerical_id = LL_EDGE_CREATE(level, start);
+					start++;
+				}
 			}
 		}
 	}
 
 
 #ifdef LL_MIN_LEVEL
+
+	/**
+	 * Get the minimum level to consider
+	 *
+	 * @return the minimum level to consider
+	 */
+	inline int min_level() const {
+		return this->_minLevel;
+	}
+
+
+private:
+
+	/**
+	 * Set the minimum level -- update procedure for the given node
+	 *
+	 * @param n the node
+	 * @param vt the vertex table element
+	 * @param l the level
+	 * @param streaming_weights the streaming weights
+	 * @param forward_pointers the forward pointers for streaming
+	 */
+	void set_min_level_helper(node_t n, const ll_mlcsr_core__begin_t* vte,
+			size_t l,
+			ll_mlcsr_edge_property<uint32_t>* streaming_weights = NULL,
+			ll_mlcsr_edge_property<edge_t>* forward_pointers = NULL) {
+
+		// Note: Maybe we can combine the two for loops
+
+#		ifdef LL_S_UPDATE_PRECOMPUTED_DEGREES
+		size_t e_remove = 0;  // The number of existing edges to remove
+		ll_foreach_edge_within_level(e, t, *this, n, l,
+				this->num_levels() - 1, vte) {
+
+			(void) t;
+			e_remove++;
+		}
+
+		if (e_remove > 0) {
+			auto b = (*this->_latest_begin)[n];
+			b.degree -= e_remove;
+
+			this->_latest_begin->cow_write(n, b);
+
+			LL_D_NODE_PRINT(n, "Removing %lu old edges, level=%lu, "
+					"old_degree=%d, new_degree=%d\n", e_remove, l,
+					(int) (b.degree + e_remove), (int) b.degree);
+			assert((int) b.degree >= 0);
+		}
+#		endif
+
+#		ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+		if (forward_pointers != NULL) {
+			assert(streaming_weights != NULL);
+
+			ll_foreach_edge_within_level(e, t, *this, n, l, l, vte) {
+
+				(void) t;
+				e_remove++;
+
+				auto weight = streaming_weights->get(e);
+				if (weight != 0) {
+					for (edge_t forward = forward_pointers->get(e);
+							forward != LL_NIL_EDGE && forward != 0;
+							forward = forward_pointers->get(forward)) {
+						//LL_D_PRINT("Weight age-off: "
+						LL_D_NODE2_PRINT(n, t, "Weight age-off: "
+								"edge=%lx %ld --> %ld: forward=%lx "
+								"w=%d\n",
+								e, n, t, forward, (int) weight);
+						assert(LL_EDGE_LEVEL(e)
+								< LL_EDGE_LEVEL(forward));
+						streaming_weights->cow_write_add(forward,
+								-weight);
+					}
+				}
+			}
+		}
+#		endif
+	}
+
+
+public:
+
 	/**
 	 * Set the minimum level to consider
 	 *
@@ -1379,6 +1812,8 @@ public:
 			ll_mlcsr_edge_property<edge_t>* forward_pointers = NULL) {
 
 		assert((ssize_t) this->_minLevel <= (ssize_t) m);
+
+		_begin.set_min_level(m);
 
 #	if defined(LL_S_UPDATE_PRECOMPUTED_DEGREES) \
 		|| defined(LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES)
@@ -1394,65 +1829,31 @@ public:
 		for (size_t l = this->_minLevel; l < m; l++) {
 			if (l >= _begin.size()) break;
 
+			if (this->has_sparse_representation(l)) {
+				size_t length = this->sparse_length(l);
+				const node_t* ids = this->sparse_node_ids(l);
+				const ll_mlcsr_core__begin_t* data = this->sparse_node_data(l);
+
+#				pragma omp parallel for schedule(static,65536)
+				for (size_t i = 0; i < length; i++) {
+					set_min_level_helper(ids[i], &data[i], l,
+							streaming_weights, forward_pointers);
+				}
+			}
+			else {
+				auto vt = this->vertex_table(l);
+
 #ifdef D_DEBUG_NODE
-			ll_foreach_node_within_level(n, *this, l) {
+				ll_foreach_node_within_level(n, *this, l) {
 #elif 0
-			/* to deal with indentation */ }
+				/* to deal with indentation */ }
 #else
-			ll_foreach_node_within_level_omp(n, *this, l, 4096) {
+				ll_foreach_node_within_level_omp(n, *this, l, 4096) {
 #endif
-
-				// Note: Maybe we can combine the two for loops
-
-#		ifdef LL_S_UPDATE_PRECOMPUTED_DEGREES
-				size_t e_remove = 0;  // The number of existing edges to remove
-				ll_foreach_edge_within_level(e, t, *this, n, l,
-						this->num_levels() - 1) {
-
-					(void) t;
-					e_remove++;
+					const ll_mlcsr_core__begin_t* vte = &(*vt)[n];
+					set_min_level_helper(n, vte, l, streaming_weights,
+							forward_pointers);
 				}
-
-				if (e_remove > 0) {
-					auto b = (*this->_latest_begin)[n];
-					b.degree -= e_remove;
-
-					this->_latest_begin->cow_write(n, b);
-
-					LL_D_NODE_PRINT(n, "Removing %lu old edges, level=%lu, "
-							"old_degree=%d, new_degree=%d\n", e_remove, l,
-							(int) (b.degree + e_remove), (int) b.degree);
-					assert((int) b.degree >= 0);
-				}
-#		endif
-
-#		ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
-				ll_foreach_edge_within_level(e, t, *this, n, l, l) {
-
-					(void) t;
-					e_remove++;
-
-					if (forward_pointers != NULL) {
-						assert(streaming_weights != NULL);
-						auto weight = streaming_weights->get(e);
-						if (weight != 0) {
-							for (edge_t forward = forward_pointers->get(e);
-									forward != LL_NIL_EDGE && forward != 0;
-									forward = forward_pointers->get(forward)) {
-								//LL_D_PRINT("Weight age-off: "
-								LL_D_NODE2_PRINT(n, t, "Weight age-off: "
-										"edge=%lx %ld --> %ld: forward=%lx "
-										"w=%d\n",
-										e, n, t, forward, (int) weight);
-								assert(LL_EDGE_LEVEL(e)
-										< LL_EDGE_LEVEL(forward));
-								streaming_weights->cow_write_add(forward,
-										-weight);
-							}
-						}
-					}
-				}
-#		endif
 			}
 		}
 
@@ -1461,6 +1862,16 @@ public:
 		this->_minLevel = m;
 	}
 #endif
+
+
+	/**
+	 * Get the maximum level to consider
+	 *
+	 * @return the maximum level to consider
+	 */
+	inline int max_level() const {
+		return this->_maxLevel;
+	}
 
 
 	/**
@@ -1599,7 +2010,7 @@ public:
 		iter.owner = LL_I_OWNER_RO_CSR;
 		iter.node = n;
 #ifdef LL_DELETIONS
-		int l = (level == -1) ? this->num_levels()-1 : level;
+		int l = (level == -1) ? this->max_level() : level;
 		iter.max_level = max_level < 0 ? l : max_level;
 #endif
 
@@ -1792,9 +2203,10 @@ public:
 	 * @param n the node
 	 * @param level the level
 	 * @param max_level the maximum visible level for deletions (-1 = level)
+	 * @param vte the corresponding vertex table element (if known)
 	 */
 	void iter_begin_within_level(ll_edge_iterator& iter, node_t n,
-			int level, int max_level=-1) const {
+			int level, int max_level=-1, const ll_mlcsr_core__begin_t* vte=NULL) const {
 
 		iter.owner = LL_I_OWNER_RO_CSR;
 		iter.node = n;
@@ -1803,7 +2215,7 @@ public:
 
 #ifdef LL_CHECK_NODE_EXISTS_IN_RO
 #ifndef FORCE_L0
-		if (!this->node_exists(n)) {
+		if (vte == NULL && !this->node_exists(n)) {
 			iter.edge = LL_NIL_EDGE;
 			return;
 		}
@@ -1811,14 +2223,14 @@ public:
 #endif
 
 		// TODO Should this be here? Is this too slow?
-		if ((node_t) this->_begin[level]->size() <= n) {
+		if (vte == NULL && (node_t) this->_begin[level]->size() <= n) {
 			iter.edge = LL_NIL_EDGE;
 			return;
 		}
 
-		const ll_mlcsr_core__begin_t& b = (*this->_begin[level])[n];
-		iter.edge = b.adj_list_start;
-		iter.left = b.level_length;
+		const ll_mlcsr_core__begin_t* b = vte == NULL ? &(*this->_begin[level])[n] : vte;
+		iter.edge = b->adj_list_start;
+		iter.left = b->level_length;
 
 		if (iter.left == 0) iter.edge = LL_NIL_EDGE;
 
@@ -1921,8 +2333,35 @@ public:
 	 */
 	edge_t find(node_t node, T value) const {
 
+		auto vt = vertex_table();
+		if (node >= (node_t) vt->size()) return LL_NIL_EDGE;
+
 		ll_edge_iterator iter;
 		this->iter_begin(iter, node);
+		FOREACH_ITER(e, *this, iter) {
+			if (iter.last_node == value) return e;
+		}
+
+		return LL_NIL_EDGE;
+	}
+
+
+	/**
+	 * Find the given node and value combination for the given level
+	 *
+	 * @param node the node
+	 * @param value the value
+	 * @param level the level
+	 * @param max_level the max level for deletions
+	 * @return the edge, or NIL_EDGE if it does not exist
+	 */
+	edge_t find(node_t node, T value, int level, int max_level) const {
+
+		auto vt = vertex_table(level);
+		if (node >= (node_t) vt->size()) return LL_NIL_EDGE;
+
+		ll_edge_iterator iter;
+		this->iter_begin(iter, node, level, max_level);
 		FOREACH_ITER(e, *this, iter) {
 			if (iter.last_node == value) return e;
 		}
@@ -2012,11 +2451,18 @@ protected:
 			size_t max_adj_lists, size_t max_edges) const {
 
 #ifdef LL_MLCSR_CONTINUATIONS
+
 		// XXX Fix this for LL_STREAMING
 		size_t continuation_size = sizeof(ll_mlcsr_core__begin_t) / sizeof(T);
 		if (sizeof(ll_mlcsr_core__begin_t) % sizeof(T) != 0) continuation_size++;
-		return level == 0 ? max_edges
-			: (max_edges + max_adj_lists * continuation_size);
+		size_t with_continuations = max_edges + max_adj_lists * continuation_size;
+
+#	ifdef LL_MLCSR_LEVEL_ID_WRAP
+		return with_continuations;
+#	else
+		return level == 0 ? max_edges : with_continuations;
+#	endif
+
 #else
 		return max_edges;
 #endif

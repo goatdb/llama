@@ -68,9 +68,6 @@ class ll_multiversion_property_array {
 	/// The property data structure
 	LL_PT_COLLECTION<LL_PT<T>, T> _properties;
 
-	/// The Level 0 properties
-	LL_PT<T>* _level0_properties;
-
 	/// The last level properties
 	LL_PT<T>* _latest_properties;
 
@@ -109,7 +106,7 @@ class ll_multiversion_property_array {
 	 */
 	inline LL_PT<T>* properties(size_t level) {
 #ifdef FORCE_L0
-		return _level0_properties;
+		return _latest_properties;
 #else
 		return _properties[level];
 #endif
@@ -159,7 +156,6 @@ public:
 		_type = type;
 		_master = NULL;
 
-		_level0_properties = NULL;
 		_latest_properties = NULL;
 
 		_max_nodes = 0;
@@ -168,8 +164,7 @@ public:
 		_latest_writable = false;
 
 		if (_properties.size() > 0) {
-			_latest_properties = _properties[_properties.size() - 1];
-			_level0_properties = _properties[0];
+			_latest_properties = _properties.latest_level();
 			_max_nodes = _latest_properties->size();
 		}
 
@@ -221,7 +216,6 @@ public:
 		_id = master->_id;
 		_name = master->_name;
 		_latest_properties = _properties[_properties.size() - 1];
-		_level0_properties = _properties[0];
 		_page_manager = master->_page_manager;
 		_own_page_manager = false;
 		_type = master->_type;
@@ -293,15 +287,50 @@ public:
 	inline short type() const {
 		return _type;
 	}
+	
+
+#ifdef LL_MIN_LEVEL
+
+	/**
+	 * Get the min level
+	 *
+	 * @return the minimum level to consider
+	 */
+	inline int min_level() const {
+		return _properties.min_level();
+	}
 
 
 	/**
-	 * Return the number of levels
+	 * Set the minimum level to consider
 	 *
-	 * @return the number of levels
+	 * @param m the minimum level
 	 */
-	inline size_t num_levels() const {
-		return _properties.size();
+	virtual void set_min_level(size_t m) {
+		_properties.set_min_level(m);
+	}
+
+#endif
+
+
+	/**
+	 * Get the max level
+	 *
+	 * @return the minimum level to consider
+	 */
+	inline int max_level() const {
+		return _properties.max_level();
+	}
+
+
+	/**
+	 * Return the max level ID that is currently in use (might still refer
+	 * to NULL, but its space is allocated in the array of levels)
+	 *
+	 * @return the max level ID
+	 */
+	inline int max_level_id() const {
+		return ((int) _properties.size()) - 1;
 	}
 
 
@@ -341,21 +370,17 @@ public:
 	 * Init level
 	 *
 	 * @param max_nodes the number of nodes
-	 * @param level the level number
 	 */
-	void init_level(size_t max_nodes, int level=-1) {
-
-		if (level < 0) level = this->_properties.size();
+	void init_level(size_t max_nodes) {
 
 		auto* b = this->_properties.new_level(max_nodes);
-		if (level == 0)
+
+		if (this->_properties.count_existing_levels() <= 1)
 			b->dense_init();
 		else
 			b->cow_init();
 
-		this->_latest_properties = this->_properties[this->_properties.size() - 1];
-		this->_level0_properties = this->_properties[0];
-
+		this->_latest_properties = b;
 		_last_write = -1;
 		_max_nodes = max_nodes;
 	}
@@ -581,7 +606,7 @@ public:
 	 *
 	 * @param level the level number
 	 */
-	void delete_level(size_t level) {
+	void delete_level(int level) {
 
 		if (_destructor != NULL) {
 
@@ -589,10 +614,10 @@ public:
 			// order
 
 			assert(level == 0 || this->_properties[level-1] == NULL);
-			assert(level + 1 >= num_levels() || this->_properties[level+1] != NULL);
+			assert(level >= max_level_id() || this->_properties[level+1] != NULL);
 
 
-			if (level + 1 >= num_levels()) {
+			if (level >= max_level_id()) {
 
 				// All levels are deleted!
 
@@ -635,6 +660,23 @@ public:
 		}
 
 		this->_properties.delete_level(level);
+	}
+
+
+	/**
+	 * Delete all levels except the specified number of most recent levels
+	 *
+	 * @param keep the number of levels to keep
+	 */
+	void keep_only_recent_levels(size_t keep) {
+
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+		LL_NOT_IMPLEMENTED;
+#endif
+
+		for (int l = 0; l <= ((int) max_level()) - (int) keep; l++) {
+			if (level_exists(l)) delete_level(l);
+		}
 	}
 };
 
@@ -718,6 +760,14 @@ class ll_mlcsr_edge_property {
 
 	/// The level creation callback
 	ll_mlcsr_edge_property_level_creation_callback<T>* _edge_level_creation;
+	
+#ifdef LL_MIN_LEVEL
+	/// The minimum level to consider
+	int _min_level;
+#endif
+
+	/// The maximum level to consider
+	int _max_level;
 
 
 public:
@@ -752,6 +802,11 @@ public:
 		_page_manager = new ll_page_manager<T>(1 << LL_ENTRIES_PER_PAGE_BITS,
 				true /* zero pages */);
 
+#ifdef LL_MIN_LEVEL
+		_min_level = 0;
+#endif
+		_max_level = -1;
+
 		// TODO Automatically init from the persistent storage
 	}
 
@@ -778,22 +833,25 @@ public:
 		_page_manager = NULL;
 		_edge_level_creation = NULL;
 
-		if (master->num_levels() > 0) {
+#ifdef LL_MIN_LEVEL
+		_min_level = master->_min_level;
+#endif
+		_max_level = master->_max_level;
+
+		if (master->max_level_id() >= 0) {
 
 			if (level < 0) level = 0;
-			if (level >= (int) master->num_levels())
-				level = (int) master->num_levels() - 1;
+			while ((ssize_t) _properties.size() <= master->max_level_id())
+				_properties.push_back(NULL);
 
-			for (int i = 0; i <= level; i++) {
-				// TODO Is the following correct?
-				if (master->_properties[i] == NULL) {
-					_properties.push_back(NULL);
-				}
-				else {
-					_properties.push_back
-						(new ll_multiversion_property_array<T>
-						 (master->_properties[i], level - i));
-				}
+			int local_level = -1;
+			for (int i = level; i >= 0;
+					i = prev_level_id_nofail(i)) {
+				local_level++;
+				if (master->_properties[i] == NULL) continue;
+
+				_properties[i] = (new ll_multiversion_property_array<T>
+						(master->_properties[i], local_level));
 			}
 		}
 	}
@@ -808,7 +866,7 @@ public:
 			if (_properties[i] != NULL) delete _properties[i];
 		}
 
-		if (_master != NULL) {
+		if (_master == NULL) {
 			delete _page_manager;
 		}
 	}
@@ -842,15 +900,69 @@ public:
 	inline const char* name() const {
 		return _name.c_str();
 	}
+	
+
+#ifdef LL_MIN_LEVEL
+
+	/**
+	 * Get the min level
+	 *
+	 * @return the minimum level to consider
+	 */
+	inline int min_level() const {
+		return _min_level;
+	}
 
 
 	/**
-	 * Return the number of levels
+	 * Set the minimum level to consider
 	 *
-	 * @return the number of levels
+	 * @param m the minimum level
 	 */
-	inline size_t num_levels() const {
-		return _properties.size();
+	virtual void set_min_level(size_t m) {
+
+		assert((int) _min_level <= (int) m);
+		_min_level = m;
+	}
+
+#endif
+
+
+	/**
+	 * Get the max level
+	 *
+	 * @return the minimum level to consider
+	 */
+	inline int max_level() const {
+		return _max_level;
+	}
+
+
+	/**
+	 * Return the max level ID that is currently in use (might still refer
+	 * to NULL, but its space is allocated in the array of levels)
+	 *
+	 * @return the max level ID
+	 */
+	inline int max_level_id() const {
+		return ((int) _properties.size()) - 1;
+	}
+
+
+	/**
+	 * Determine if this level exists
+	 *
+	 * @param level the level
+	 * @return if the level exists
+	 */
+	bool level_exists(int level) {
+#ifdef LL_MIN_LEVEL
+		if (!ll_level_within_bounds(level, _min_level, _max_level))
+			return false;
+#else
+		if (level > _max_level) return false;
+#endif
+		return _properties[level] != NULL;
 	}
 
 
@@ -922,6 +1034,8 @@ public:
 					n.c_str(), _type, _destructor, _page_manager, "ep");
 			_properties.push_back(p);
 		}
+
+		_max_level = ((int) _properties.size()) - 1;
 	}
 
 #endif
@@ -950,31 +1064,36 @@ public:
 	 */
 	void cow_init_level(size_t max_edges) {
 
-		if (!_partial_init) {
-			for (size_t i = 0; i < _properties.size(); i++) {
-				if (_properties[i] == NULL) continue;
-				if (_properties[i]->count_existing_levels() > 0)
-					_properties[i]->cow_init_level(_properties[i]->size());
-			}
-		}
-		else {
-			_partial_init = false;
-		}
+		cow_init_level_partial();
+		_partial_init = false;
 
-		char s[32]; sprintf(s, "-%lu", _properties.size());
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+#error "NOT IMPLEMENTED"
+#else
+		int level = _properties.size();
+#endif
+
+		char s[32]; sprintf(s, "-%d", level);
 		std::string n = _name; n += s;
+
+		// XXX Wrap
+
+		while ((ssize_t) this->_properties.size() <= level)
+			this->_properties.push_back(NULL);
 
 		ll_multiversion_property_array<T>* p = new ll_multiversion_property_array<T>(
 				IF_LL_PERSISTENCE(_storage,)
 				_id, n.c_str(), _type, _destructor, _page_manager, "ep");
-		_properties.push_back(p);
+
+		_properties[level] = p;
+		_max_level = level;
 
 		if (_edge_level_creation == NULL) {
 			p->dense_init_level(max_edges);
 		}
 		else {
 			_edge_level_creation->dense_init_edge_level(this, p,
-					_properties.size()-1, max_edges);
+					level, max_edges);
 		}
 	}
 
@@ -998,7 +1117,7 @@ public:
 			LL_E_PRINT("Attempting to write to NULL level %lu\n", level);
 			abort();
 		}
-		if (p->num_levels() <= 1)
+		if (p->max_level_id() <= 0)
 			p->dense_direct_write(LL_EDGE_INDEX(edge), value);
 		else
 			p->cow_write(LL_EDGE_INDEX(edge), value);
@@ -1031,11 +1150,11 @@ public:
 	 * Finish a COW level
 	 */
 	void cow_finish_level() {
-		for (size_t i = 0; i < _properties.size() - 1; i++) {
-			if (_properties[i] == NULL) continue;
+		for (size_t i = 0; i < _properties.size(); i++) {
+			if (_properties[i] == NULL || _max_level == (int) i) continue;
 			_properties[i]->cow_finish_level();
 		}
-		_properties[_properties.size()-1]->dense_finish_level();
+		_properties[_max_level]->dense_finish_level();
 	}
 
 
@@ -1191,28 +1310,68 @@ public:
 	 *
 	 * @param level the level number
 	 */
-	void delete_level(size_t level) {
+	void delete_level(int level) {
 
-		for (size_t i = 0; i < level; i++) {
-			if (_properties[i] == NULL) continue;
-			if (this->_properties[i]->level_exists(level-i))
-				this->_properties[i]->delete_level(level-i);
-			if (_properties[i]->count_existing_levels() == 0) {
-				delete _properties[i];
-				_properties[i] = NULL;
-			}
+		// NOTE: This assumes that all previous levels are deleted
+
+#ifdef LL_MIN_LEVEL
+		assert(!ll_level_within_bounds(level, this->_min_level, this->_max_level));
+#else
+		LL_E_PRINT("Cannot delete a level without using the LL_MIN_LEVEL feature\n");
+		abort();
+#endif
+
+		if (_properties[level] == NULL) return;
+
+		for (int i = 0; i <= this->_properties[level]->max_level_id(); i++) {
+			if (this->_properties[level]->level_exists(i))
+				this->_properties[level]->delete_level(i);
 		}
 
-		if (_properties[level] != NULL) {
-			for (size_t i = 0; i < this->_properties[level]->num_levels(); i++) {
-				if (this->_properties[level]->level_exists(i))
-					this->_properties[level]->delete_level(i);
-			}
-			if (_properties[level]->count_existing_levels() == 0) {
-				delete _properties[level];
-				_properties[level] = NULL;
-			}
+		assert(_properties[level]->count_existing_levels() == 0);
+		delete _properties[level];
+		_properties[level] = NULL;
+	}
+
+
+	/**
+	 * Delete all levels except the specified number of most recent levels
+	 *
+	 * @param keep the number of levels to keep
+	 */
+	void keep_only_recent_levels(size_t keep) {
+
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+		LL_NOT_IMPLEMENTED;
+#endif
+
+		for (int l = 0; l <= ((int) _max_level) - (int) keep; l++) {
+			if (_properties[l] == NULL) continue;
+			_properties[l]->keep_only_recent_levels(keep);
 		}
+	}
+
+
+private:
+
+	/**
+	 * Get the previous level ID
+	 *
+	 * @param level the current level ID
+	 * @return the previous level ID, or -1 if none
+	 */
+	inline const int prev_level_id_nofail(int level) const {
+
+		int id = ((int) level) - 1;
+
+#ifdef LL_MIN_LEVEL
+		if (id == this->_min_level) return -1;
+#endif
+#ifdef LL_MLCSR_LEVEL_ID_WRAP
+		if (id < 0) id = LL_MAX_LEVEL;
+#endif
+
+		return id;
 	}
 };
 

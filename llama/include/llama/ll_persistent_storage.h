@@ -1768,6 +1768,94 @@ public:
 
 
 	/**
+	 * Get the max level
+	 *
+	 * @return the maximum level to consider
+	 */
+	inline int max_level() const {
+		// Does not support LL_MLCSR_LEVEL_ID_WRAP
+		return ((int) size()) - 1;
+	}
+
+
+	/**
+	 * Determine if there is a previous level
+	 *
+	 * @param level the current level ID
+	 * @param true if there is a previous level
+	 */
+	inline bool has_prev_level(int level) const {
+		return level > 0 && (*this)[level-1] != NULL;
+	}
+
+
+	/**
+	 * Get the previous level
+	 *
+	 * @param level the current level ID
+	 * @return the previous level
+	 */
+	inline A* prev_level(int level) {
+		int id = ((int) level) - 1;
+		assert(id >= 0);
+		return (*this)[id];
+	}
+
+
+	/**
+	 * Get the previous level
+	 *
+	 * @param level the current level ID
+	 * @return the previous level
+	 */
+	inline const A* prev_level(int level) const {
+		int id = ((int) level) - 1;
+		assert(id >= 0);
+		return (*this)[id];
+	}
+
+
+	/**
+	 * Get the latest level
+	 *
+	 * @return the latest level if available, or NULL otherwise
+	 */
+	A* latest_level() {
+		if (_levels.empty()) return NULL;
+		return (*this)[size() - 1];
+	}
+
+
+	/**
+	 * Get the latest level
+	 *
+	 * @return the latest level if available, or NULL otherwise
+	 */
+	const A* latest_level() const {
+		if (_levels.empty()) return NULL;
+		return (*this)[size() - 1];
+	}
+
+
+	/**
+	 * Get the next level ID, or fail if there is not enough space
+	 *
+	 * @return the next level ID
+	 */
+	int next_level_id() const {
+
+		int new_level_id = _levels.size();
+		if (new_level_id > (int) LL_MAX_LEVEL) {
+			LL_E_PRINT("Maximum number of levels reached (%ld)\n",
+						(ssize_t) LL_MAX_LEVEL + 1);
+			abort();
+		}
+
+		return new_level_id;
+	}
+
+
+	/**
 	 * Determine if the given level exists
 	 *
 	 * @param level the level number
@@ -1851,6 +1939,16 @@ public:
 
 		delete _levels[level];
 		_levels[level] = NULL;
+	}
+
+
+	/**
+	 * Delete all levels except the specified number of most recent levels
+	 *
+	 * @param keep the number of levels to keep
+	 */
+	void keep_only_recent_levels(size_t keep) {
+		LL_NOT_IMPLEMENTED;
 	}
 
 
@@ -2053,6 +2151,26 @@ public:
 	 */
 	inline size_t chunks() const {
 		return _num_pages;
+	}
+
+
+	/**
+	 * Return the number of chunks (pages)
+	 *
+	 * @return the number of chunks
+	 */
+	inline size_t pages() const {
+		return _num_pages;
+	}
+
+
+	/**
+	 * Return the page
+	 *
+	 * @param index the page index
+	 */
+	inline T* page(size_t index) {
+		return _indirection[index];
 	}
 
 
@@ -2537,6 +2655,16 @@ public:
 	 * @param level the level number
 	 */
 	void delete_level(size_t level) {
+		LL_NOT_IMPLEMENTED;
+	}
+
+
+	/**
+	 * Delete all levels except the specified number of most recent levels
+	 *
+	 * @param keep the number of levels to keep
+	 */
+	void keep_only_recent_levels(size_t keep) {
 		LL_NOT_IMPLEMENTED;
 	}
 
