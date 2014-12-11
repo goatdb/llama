@@ -471,12 +471,23 @@ public:
 };
 
 
+/**
+ * The edge data structure used by ll_continuous_direct_loader
+ */
 typedef struct {
 	node_t tail;
 	node_t head;
 } ll_cdl_edge_data_t;
 
-bool operator< (const ll_cdl_edge_data_t& a, const ll_cdl_edge_data_t& b) {
+
+/**
+ * Compare two instances of ll_cdl_edge_data_t
+ *
+ * @param a the first object
+ * @param b the first object
+ * @return true if a < b
+ */
+inline bool operator< (const ll_cdl_edge_data_t& a, const ll_cdl_edge_data_t& b) {
 	if (a.tail != b.tail) return a.tail < b.tail;
 	return a.head < b.head;
 }

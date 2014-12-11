@@ -40,7 +40,7 @@
 #include "llama/ll_common.h"
 #include "llama/ll_writable_elements.h"
 
-#define LL_WRITABLE_SWCOW_FREE_LIST
+//#define LL_WRITABLE_SWCOW_FREE_LIST
 
 
 
@@ -331,7 +331,7 @@ static long long* __free_w_vt_swcow_pages[FREE_W_VT_SWCOW_PAGES_LENGTH] = { NULL
  *
  * @return the page
  */
-void* __w_vt_swcow_page_new(void) {
+inline void* __w_vt_swcow_page_new(void) {
 	void* p = malloc(sizeof(long long) * LL_ENTRIES_PER_PAGE);
 	memset(p, 0, sizeof(long long) * LL_ENTRIES_PER_PAGE);
 	return p;
@@ -343,7 +343,7 @@ void* __w_vt_swcow_page_new(void) {
  *
  * @return the page
  */
-void* __w_vt_swcow_page_allocate(void) {
+inline void* __w_vt_swcow_page_allocate(void) {
 
 	for (int i = 0; i < FREE_W_VT_SWCOW_PAGES_LENGTH; i++) {
 		long long* x = __free_w_vt_swcow_pages[i];
@@ -364,7 +364,7 @@ void* __w_vt_swcow_page_allocate(void) {
  *
  * @param page the page
  */
-void __w_vt_swcow_page_deallocate(void* page) {
+inline void __w_vt_swcow_page_deallocate(void* page) {
 
 	int i = (int) ((((long) page) >> 6) % FREE_W_VT_SWCOW_PAGES_LENGTH);
 
