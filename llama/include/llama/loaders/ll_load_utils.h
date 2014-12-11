@@ -269,6 +269,37 @@ protected:
 
 public:
 
+
+	/**
+	 * Is this a simple data source?
+	 */
+	virtual bool simple() {
+		return true;
+	}
+
+
+	/**
+	 * Get the next edge
+	 *
+	 * @param o_tail the output for tail
+	 * @param o_head the output for head
+	 * @return true if the edge was loaded, false if EOF or error
+	 */
+	virtual bool next_edge(node_t* o_tail, node_t* o_head) {
+
+		NodeType t = 0;
+		NodeType h = 0;
+		WeightType w;
+
+		bool r = next_edge(&t, &h, &w);
+
+		*o_tail = t;
+		*o_head = h;
+
+		return r;
+	}
+
+
 	/**
 	 * Return true if the data file has potentially more data in it
 	 *
@@ -288,11 +319,6 @@ public:
 	 */
 	bool load_direct(ll_mlcsr_ro_graph* graph,
 			const ll_loader_config* config) {
-
-#ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
-		LL_E_PRINT("LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES not supported");
-		abort();
-#endif
 
 
 		// Check if we have stat and if we can load the data just using the
@@ -412,9 +438,13 @@ public:
 						unsigned x = e.tail; e.tail = e.head; e.head = x;
 					}
 				}
+
+#ifndef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+				// Need to preserve count if LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
 				if (last_head == e.head && last_tail == e.tail) {
 					continue;
 				}
+#endif
 
 				last_head = e.head;
 				last_tail = e.tail;
@@ -477,11 +507,14 @@ public:
 
 			while (out_sort->next_block(&buffer, &length)) {
 				while (length --> 0) {
+
+#ifndef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
 					if (last_head == buffer->head
 							&& last_tail == buffer->tail) {
 						buffer++;
 						continue;
 					}
+#endif
 
 					last_head = buffer->head;
 					last_tail = buffer->tail;
@@ -631,6 +664,38 @@ public:
 		if (load_weight) prop_weight = init_prop_weight(graph);
 
 
+		// Initialize all other edge properties
+
+		ll_with(auto p = graph->get_all_edge_properties_32()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				if ((void*) it->second == (void*) prop_weight) continue;
+				it->second->cow_init_level(out.max_edges(new_level));
+			}
+		}
+		ll_with(auto p = graph->get_all_edge_properties_64()) {
+			for (auto it = p.begin(); it != p.end(); it++) {
+				if ((void*) it->second == (void*) prop_weight) continue;
+				it->second->cow_init_level(out.max_edges(new_level));
+			}
+		}
+
+
+		// Initialize streaming weights
+
+#ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+
+		ll_mlcsr_edge_property<uint32_t>* streaming_weight
+			= graph->get_edge_weights_streaming();
+		assert(streaming_weight != NULL);
+
+#ifndef LL_S_SINGLE_SNAPSHOT
+		ll_mlcsr_edge_property<edge_t>* streaming_forward
+			= graph->get_edge_forward_streaming();
+		assert(streaming_forward != NULL);
+#endif
+#endif
+
+
 		// Initialize the external sort for the in-edges
 
 		ll_external_sort<xs_in_edge, xs_in_edge_comparator>* in_sort = NULL;
@@ -648,6 +713,7 @@ public:
 
 		if (already_sorted) {
 			assert(config->lc_direction != LL_L_UNDIRECTED_DOUBLE);
+			assert(!config->lc_deduplicate);	// XXX
 			rewind();
 
 			last_head = LL_NIL_NODE;
@@ -722,6 +788,7 @@ public:
 			xs_w_edge* buffer;
 			size_t length;
 			size_t index = 0;
+			size_t num_duplicates = 0;
 
 			last_tail = LL_NIL_NODE;
 			last_head = LL_NIL_NODE;
@@ -732,6 +799,19 @@ public:
 					if (config->lc_deduplicate && last_head == buffer->head
 							&& last_tail == buffer->tail) {
 						buffer++;
+						num_duplicates++;
+#ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+						edge_t edge = LL_EDGE_CREATE(new_level, index-1);
+						uint32_t old_weight = (*streaming_weight)[edge];
+						streaming_weight->cow_write(edge, old_weight + 1);
+						LL_D_NODE2_PRINT(buffer->tail, buffer->head,
+								"Update duplicate edge %lx: %lu --> %lu, "
+								"weight %u ==> %u\n",
+								edge, (size_t) buffer->tail,
+								(size_t) buffer->head,
+								old_weight,
+								old_weight + 1);
+#endif
 						continue;
 					}
 
@@ -748,6 +828,60 @@ public:
 					last_tail = buffer->tail;
 
 					(*et)[index] = LL_VALUE_CREATE((node_t) buffer->head);
+
+#ifdef LL_STREAMING
+					// Deal with duplicates
+
+					if (config->lc_deduplicate) {
+						edge_t old = new_level == 0 ? LL_NIL_EDGE
+							: out.find(buffer->tail, buffer->head,
+									new_level-1, new_level-1);
+						if (old != LL_NIL_EDGE) {
+							graph->update_max_visible_level_lower_only(old,
+									new_level);
+#	ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+							uint32_t old_weight = (*streaming_weight)[old];
+							edge_t edge = LL_EDGE_CREATE(new_level, index);
+							streaming_weight->cow_write(edge,
+									old_weight + (uint32_t) num_duplicates + 1);
+#		ifndef LL_S_SINGLE_SNAPSHOT
+							streaming_forward->cow_write(old, edge);
+#		endif
+							LL_D_NODE2_PRINT(buffer->tail, buffer->head,
+									"Found a duplicate of %lx: %lu --> %lu, "
+									"weight %u ==> %u\n",
+									old, (size_t) buffer->tail,
+									(size_t) buffer->head,
+									old_weight,
+									old_weight + (uint32_t) num_duplicates + 1);
+#	else
+							LL_D_NODE2_PRINT(buffer->tail, buffer->head,
+									"Found a duplicate of %lx: %lu --> %lu\n",
+									old, (size_t) buffer->tail,
+									(size_t) buffer->head);
+#	endif
+						}
+						else {
+#	ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+							edge_t edge = LL_EDGE_CREATE(new_level, index);
+							streaming_weight->cow_write(edge,
+									(uint32_t) num_duplicates + 1);
+							LL_D_NODE2_PRINT(buffer->tail, buffer->head,
+									"Add %llx: %lu --> %lu, weight = %u\n",
+									LL_EDGE_CREATE(new_level, index),
+									(size_t) buffer->tail,
+									(size_t) buffer->head,
+									(uint32_t) num_duplicates + 1);
+#	endif
+						}
+					}
+#endif
+
+					LL_D_NODE2_PRINT(buffer->tail, buffer->head,
+							"Add %llx: %lu --> %lu\n",
+							LL_EDGE_CREATE(new_level, index),
+							(size_t) buffer->tail,
+							(size_t) buffer->head);
 
 					if (HasWeight && load_weight) {
 						edge_t edge = LL_EDGE_CREATE(new_level, index);
@@ -766,6 +900,7 @@ public:
 
 					index++;
 					buffer++;
+					num_duplicates = 0;
 
 					if (print_progress) {
 						if (index % step == 0) {
@@ -875,6 +1010,68 @@ public:
 
 		_last_has_more = _has_more;
 		_has_more = false;
+
+
+		// Finish node properties
+
+		{
+			auto p = graph->get_all_node_properties_32();
+			for (auto it = p.begin(); it != p.end(); it++) {
+				if (!it->second->writable())
+					it->second->writable_init(max_nodes);
+				it->second->freeze(max_nodes);
+				if (it->second->max_level() != out.max_level()) {
+					fflush(stdout);
+					fprintf(stderr, "\nASSERT FAILED: Node property checkpoint "
+							"for '%s': %d level(s), %d expected\n",
+							it->first.c_str(), it->second->max_level(),
+							out.max_level());
+					exit(1);
+				}
+				assert(it->second->max_level() == out.max_level());
+			}
+		}
+		{
+			auto p = graph->get_all_node_properties_64();
+			for (auto it = p.begin(); it != p.end(); it++) {
+				if (!it->second->writable())
+					it->second->writable_init(max_nodes);
+				it->second->freeze(max_nodes);
+				assert(it->second->max_level() == out.max_level());
+			}
+		}
+
+
+		// Finish edge properties - finish the levels
+
+		{
+			auto p = graph->get_all_edge_properties_32();
+			for (auto it = p.begin(); it != p.end(); it++) {
+				if (it->second->writable())
+					it->second->freeze();
+				else
+					it->second->cow_finish_level();
+				if (it->second->max_level() != out.max_level()) {
+					fflush(stdout);
+					fprintf(stderr, "\nASSERT FAILED: Edge property checkpoint "
+							"for '%s': %d level(s), %d expected\n",
+							it->first.c_str(), it->second->max_level(),
+							out.max_level());
+					exit(1);
+				}
+				assert(it->second->max_level() == out.max_level());
+			}
+		}
+		{
+			auto p = graph->get_all_edge_properties_64();
+			for (auto it = p.begin(); it != p.end(); it++) {
+				if (it->second->writable())
+					it->second->freeze();
+				else
+					it->second->cow_finish_level();
+				assert(it->second->max_level() == out.max_level());
+			}
+		}
 
 		return true;
 	}
@@ -1610,6 +1807,85 @@ private:
 		_has_more = false;
 
 		return true;
+	}
+};
+
+
+/**
+ * The direct loader for ll_cdl_edge_data_t buffers
+ */
+class ll_cdl_loader : public ll_edge_list_loader<node_t, false>
+{	
+
+	std::vector<ll_cdl_edge_data_t>* _buffer;
+	size_t _index;
+	bool _own;
+
+
+public:
+
+	/**
+	 * Create an instance of class ll_cdl_loader
+	 *
+	 * @param buffer the buffer
+	 * @param own true to transfer ownership of the buffer to this object
+	 */
+	ll_cdl_loader(std::vector<ll_cdl_edge_data_t>* buffer, bool own = false)
+		: ll_edge_list_loader<node_t, false>() {
+		_buffer = buffer;
+		_index = 0;
+		_own = own;
+	}
+
+
+	/**
+	 * Destroy the loader
+	 */
+	virtual ~ll_cdl_loader() {
+		if (_own) delete _buffer;
+	}
+
+
+protected:
+
+	/**
+	 * Read the next edge
+	 *
+	 * @param o_tail the output for tail
+	 * @param o_head the output for head
+	 * @param o_weight the output for weight (ignore if HasWeight is false)
+	 * @return true if the edge was loaded, false if EOF or error
+	 */
+	virtual bool next_edge(node_t* o_tail, node_t* o_head,
+			float* o_weight) {
+
+		if (_index >= _buffer->size()) return false;
+
+		*o_tail = (*_buffer)[_index].tail;
+		*o_head = (*_buffer)[_index].head;
+		_index++;
+
+		return true;
+	}
+
+
+	/**
+	 * Rewind the input file
+	 */
+	virtual void rewind() {
+		_index = 0;
+	}
+
+
+public:
+
+	/**
+	 * Get the size
+	 *
+	 * @return size
+	 */
+	inline size_t size() const {
+		return _buffer->size();
 	}
 };
 

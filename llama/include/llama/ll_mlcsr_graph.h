@@ -146,9 +146,12 @@ class ll_mlcsr_ro_graph {
 	/// The edge integer weights for streaming applications
 	ll_mlcsr_edge_property<uint32_t>* _edge_stream_weights;
 
+#ifndef LL_S_SINGLE_SNAPSHOT
+
 	/// The edge forward pointers for updating weights in streaming applications
 	ll_mlcsr_edge_property<edge_t>* _edge_stream_forward;
 
+#endif
 #endif
 
 	/// The next node property ID
@@ -211,6 +214,7 @@ public:
 		_edge_stream_weights
 			= this->create_uninitialized_edge_property_32("stream-weight", LL_T_INT32);
 
+#ifndef LL_S_SINGLE_SNAPSHOT
 		// TODO This should be a *sparse* property, not dense -- use COW,
 		// not DENSE_INIT when initializing
 		_edge_stream_forward = reinterpret_cast<ll_mlcsr_edge_property<edge_t>*>(
@@ -219,6 +223,7 @@ public:
 					 "stream-forward", LL_T_INT32)
 				 : (void*) this->create_uninitialized_edge_property_64(
 					 "stream-forward", LL_T_INT64)));
+#endif
 #endif
 
 #ifdef LL_PERSISTENCE
@@ -383,10 +388,12 @@ public:
 			= reinterpret_cast<ll_mlcsr_edge_property<uint32_t>*>(
 					get_edge_property_32("stream-weight"));
 
+#ifndef LL_S_SINGLE_SNAPSHOT
 		_edge_stream_forward = reinterpret_cast<ll_mlcsr_edge_property<edge_t>*>(
 				(sizeof(edge_t) == sizeof(uint32_t)
 				 ? (void*) get_edge_property_32("stream-forward")
 				 : (void*) get_edge_property_64("stream-forward")));
+#endif
 #endif
 
 		_update_lock = 0;
@@ -561,7 +568,7 @@ public:
 
 		ll_spinlock_acquire(&_csrs_update_lock);
 
-#	ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+#	if defined(LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES) && !defined(LL_S_SINGLE_SNAPSHOT)
 
 		this->_out.set_min_level(m, this->_edge_stream_weights,
 				this->_edge_stream_forward);
@@ -1279,6 +1286,8 @@ public:
 	}
 
 
+#ifndef LL_S_SINGLE_SNAPSHOT
+
 	/**
 	 * Get the edge forward pointer property for streaming
 	 *
@@ -1288,6 +1297,7 @@ public:
 		return _edge_stream_forward;
 	}
 
+#endif
 #endif
 
 
@@ -1618,8 +1628,12 @@ public:
 #		ifdef LL_SORT_EDGES
 #			error "Not implemented"
 #		endif
+#		ifdef LL_S_SINGLE_SNAPSHOT
+					_out.write_values(n, w->wn_out_edges, NULL);
+#		else
 					_out.write_values(n, w->wn_out_edges,
 							this->_edge_stream_forward);
+#		endif
 #	elif defined(LL_SORT_EDGES)
 					v.clear();
 					source->get_out_edges(n, v);

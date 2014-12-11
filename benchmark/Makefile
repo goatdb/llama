@@ -38,6 +38,10 @@ ifdef FLAT_VT
 	CFLAGS := -DLL_FLAT_VT ${CFLAGS}
 endif
 
+ifdef NO_CONT
+	CFLAGS := -DLL_NO_CONTINUATIONS ${CFLAGS}
+endif
+
 
 #
 # Debug
@@ -99,8 +103,13 @@ ifdef FLAT_VT
 	T_BASE  := ${T_BASE}-flatvt
 endif
 
+ifdef NO_CONT
+	T_BASE  := ${T_BASE}-nocont
+endif
+
 CORE_TARGETS   := ${T_BASE}-memory ${T_BASE}-memory-wd ${T_BASE}-persistent \
-                  ${T_BASE}-persistent-wd ${T_BASE}-slcsr ${T_BASE}-streaming
+                  ${T_BASE}-persistent-wd ${T_BASE}-slcsr ${T_BASE}-streaming \
+				  ${T_BASE}-streaming-weights
 DEBUG_TARGETS  := $(patsubst %,%_debug,${CORE_TARGETS})
 COMMON_TARGETS := ${CORE_TARGETS}
 
@@ -147,6 +156,12 @@ ${T_BASE}-streaming: benchmark.cc ${COMMON_DEPENDENCIES}
 	@mkdir -p ${T_DIR}
 	@${CC} -DLL_STREAMING ${CFLAGS} $< ${LFLAGS} -o $@
 
+${T_BASE}-streaming-weights: benchmark.cc ${COMMON_DEPENDENCIES}
+	@echo CC $@ >&2
+	@mkdir -p ${T_DIR}
+	@${CC} -DLL_STREAMING -DLL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES \
+		${CFLAGS} $< ${LFLAGS} -o $@
+
 ${T_BASE}-memory-wd: benchmark.cc ${COMMON_DEPENDENCIES}
 	@echo CC $@ >&2
 	@mkdir -p ${T_DIR}
@@ -182,6 +197,12 @@ ${T_BASE}-streaming_debug: benchmark.cc ${COMMON_DEPENDENCIES}
 	@echo CC $@ >&2
 	@mkdir -p ${T_DIR}
 	@${CC} -DLL_STREAMING ${CFLAGS_D} $< ${LFLAGS_D} -o $@
+
+${T_BASE}-streaming-weights_debug: benchmark.cc ${COMMON_DEPENDENCIES}
+	@echo CC $@ >&2
+	@mkdir -p ${T_DIR}
+	@${CC} -DLL_STREAMING -DLL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES \
+		${CFLAGS_D} $< ${LFLAGS_D} -o $@
 
 ${T_BASE}-memory-wd_debug: benchmark.cc ${COMMON_DEPENDENCIES}
 	@echo CC $@ >&2
@@ -219,6 +240,18 @@ ${T_BASE}-w-memory_debug: benchmark.cc ${T_DIR} ${HEADERS} Makefile
 	@${CC} -DLL_MEMORY_ONLY -DBENCHMARK_WRITABLE \
 		-DLL_DELETIONS ${CFLAGS_D} $< ${LFLAGS_D} -o $@
 
+${T_BASE}-ss-streaming_debug: benchmark.cc ${COMMON_DEPENDENCIES}
+	@echo CC $@ >&2
+	@mkdir -p ${T_DIR}
+	@${CC} -DLL_STREAMING -DLL_S_SINGLE_SNAPSHOT ${CFLAGS_D} $< ${LFLAGS_D} -o $@
+
+${T_BASE}-ss-streaming-weights_debug: benchmark.cc ${COMMON_DEPENDENCIES}
+	@echo CC $@ >&2
+	@mkdir -p ${T_DIR}
+	@${CC} -DLL_STREAMING -DLL_S_SINGLE_SNAPSHOT \
+		-DLL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES \
+		${CFLAGS_D} $< ${LFLAGS_D} -o $@
+
 
 
 #
@@ -229,6 +262,28 @@ ${T_BASE}-w-memory: benchmark.cc ${T_DIR} ${HEADERS} Makefile
 	@echo CC $@ >&2
 	@${CC} -DLL_MEMORY_ONLY -DBENCHMARK_WRITABLE \
 		-DLL_DELETIONS ${CFLAGS} $< ${LFLAGS} -o $@
+
+${T_BASE}-w-memory-nd: benchmark.cc ${T_DIR} ${HEADERS} Makefile
+	@echo CC $@ >&2
+	@${CC} -DLL_MEMORY_ONLY -DBENCHMARK_WRITABLE \
+		${CFLAGS} $< ${LFLAGS} -o $@
+
+${T_BASE}-w-slcsr: benchmark.cc ${T_DIR} ${HEADERS} Makefile
+	@echo CC $@ >&2
+	@${CC} -DLL_SLCSR -DBENCHMARK_WRITABLE \
+		 ${CFLAGS} $< ${LFLAGS} -o $@
+
+${T_BASE}-ss-streaming: benchmark.cc ${COMMON_DEPENDENCIES}
+	@echo CC $@ >&2
+	@mkdir -p ${T_DIR}
+	@${CC} -DLL_STREAMING -DLL_S_SINGLE_SNAPSHOT ${CFLAGS} $< ${LFLAGS} -o $@
+
+${T_BASE}-ss-streaming-weights: benchmark.cc ${COMMON_DEPENDENCIES}
+	@echo CC $@ >&2
+	@mkdir -p ${T_DIR}
+	@${CC} -DLL_STREAMING -DLL_S_SINGLE_SNAPSHOT \
+		-DLL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES \
+		${CFLAGS} $< ${LFLAGS} -o $@
 
 
 

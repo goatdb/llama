@@ -164,6 +164,32 @@ inline double ll_timeval_to_ms(struct timeval& t) {
 
 
 /**
+ * Get RDTSC counter
+ *
+ * @return the current time in ms
+ */
+inline uint64_t ll_rdtsc() {
+	unsigned h, l;
+	asm volatile("rdtsc" : "=a" (l), "=d" (h));
+	return ((uint64_t) l) | (((uint64_t) h) << 32);
+}
+
+
+/**
+ * Get the number of RDTSC ticks per ms
+ *
+ * @param ms the number of ms used for calibration
+ * @return the number of ticks per ms
+ */
+inline double ll_rdtsc_per_ms(double ms = 100) {
+	double et, st = ll_get_time_ms();
+	uint64_t s = ll_rdtsc();
+	while (((et = ll_get_time_ms()) - st) < ms);
+	return (ll_rdtsc() - s) / (et - st);
+}
+
+
+/**
  * Get a sum
  *
  * @param v the vector
@@ -340,6 +366,22 @@ inline int64_t ll_rand64_positive_r(unsigned* seedp) {
 	r = (r << 16) ^ (rand_r(seedp) & 0xffff);
 	r = (r << 16) ^ (rand_r(seedp) & 0xffff);
 	return r;
+}
+
+
+/**
+ * Check whether the given level number is within the bounds
+ *
+ * @param level the level
+ * @param min the min level (inclusive)
+ * @param max the max level (inclusive)
+ * @return true if it is within the given bounds
+ */
+inline bool ll_level_within_bounds(int level, int min, int max) {
+	if (min <= max)
+		return min <= level && level <= max;
+	else
+		return (min <= level || level <= max) && max >= 0;
 }
 
 
@@ -527,8 +569,18 @@ static inline bool _ll_atomic_compare_and_swap(long *dest, long old_val,
     return __sync_bool_compare_and_swap(dest, old_val, new_val);
 }
 
+static inline bool _ll_atomic_compare_and_swap(unsigned long *dest,
+		unsigned long old_val, unsigned long new_val) {
+    return __sync_bool_compare_and_swap(dest, old_val, new_val);
+}
+
 static inline bool _ll_atomic_compare_and_swap(long long* dest, long long old_val,
 		long long new_val) {
+    return __sync_bool_compare_and_swap(dest, old_val, new_val);
+}
+
+static inline bool _ll_atomic_compare_and_swap(unsigned long long *dest,
+		unsigned long long old_val, unsigned long long new_val) {
     return __sync_bool_compare_and_swap(dest, old_val, new_val);
 }
 

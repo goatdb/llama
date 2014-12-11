@@ -264,11 +264,23 @@ inline bool ll_is_type_floating_point(short t) {
 #endif
 
 #ifdef LL_STREAMING
-#	define LL_MIN_LEVEL
-#	define LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
-#	define LL_S_UPDATE_PRECOMPUTED_DEGREES
-#	ifndef DEL_PRESET
-#		define LL_DELETIONS
+#	define LL_S_DIRECT
+//#	define LL_S_SINGLE_SNAPSHOT
+//#	define LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+#endif
+
+#ifdef LL_STREAMING
+#	ifdef LL_S_SINGLE_SNAPSHOT
+#		ifndef LL_S_DIRECT
+#			error "LL_S_SINGLE_SNAPSHOT requires LL_S_DIRECT"
+#		endif
+#	else
+#		define LL_MIN_LEVEL
+//#		define LL_MLCSR_LEVEL_ID_WRAP
+#		define LL_S_UPDATE_PRECOMPUTED_DEGREES
+#		ifndef DEL_PRESET
+#			define LL_DELETIONS
+#		endif
 #	endif
 #endif
 
