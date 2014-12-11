@@ -2093,7 +2093,10 @@ private:
 
 		int level = LL_EDGE_LEVEL(iter.edge);
 		if (level == 0 
-				|| iter.node >= (node_t) this->_begin[level-1]->size()) {
+#ifndef LL_MLCSR_CONTINUATIONS
+				|| iter.node >= (node_t) this->_begin[level-1]->size()
+#endif
+		   ) {
 			iter.edge = LL_NIL_EDGE;
 		}
 		else {

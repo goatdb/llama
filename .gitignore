@@ -29,3 +29,6 @@ cachegrind.out.*
 gmon.*
 massif.out.*
 
+# Other files that should not be checked in
+.gdb_history
+
