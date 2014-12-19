@@ -220,12 +220,12 @@ private:
 			else {
 				_start_offset = 0;
 				_stop_offset = 0; //st.st_size;
+				_offset = 0;
 			}
 
 			_line_n = 64;
 			_line = (char*) malloc(_line_n);
 
-			_offset = 0;
 			_errors = 0;
 			_done = false;
 			_max_allowed_errors = 100;		// TODO Should be configurable
