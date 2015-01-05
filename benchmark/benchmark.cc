@@ -1507,6 +1507,7 @@ protected:
 #endif
 
 		// Drop old versions
+		// TODO Fix the performance outlier for -W 3
 		graph.ro_graph().keep_only_recent_versions(2);
 
 		_stats.after_advance_window();

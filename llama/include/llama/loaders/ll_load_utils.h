@@ -514,15 +514,21 @@ public:
 						buffer++;
 						continue;
 					}
+
+					degrees_out[buffer->tail]++;
+					if (reverse) degrees_in[buffer->head]++;
+#else
+					if (last_head != buffer->head
+							|| last_tail != buffer->tail) {
+						degrees_out[buffer->tail]++;
+						if (reverse) degrees_in[buffer->head]++;
+					}
 #endif
 
 					last_head = buffer->head;
 					last_tail = buffer->tail;
 
-					degrees_out[buffer->tail]++;
-					if (reverse) degrees_in[buffer->head]++;
 					buffer++;
-
 					index++;
 
 					if (print_progress) {
