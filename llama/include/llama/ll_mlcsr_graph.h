@@ -708,9 +708,20 @@ public:
 	 * @param e the edge
 	 * @return the corresponding in-edge
 	 */
-    edge_t out_to_in(edge_t e) {
+	edge_t out_to_in(edge_t e) {
 		return _out.translate_edge(e);
-    }
+	}
+
+
+	/**
+	 * Get the corresponding out-edge
+	 *
+	 * @param e the in-edge
+	 * @return the corresponding out-edge
+	 */
+	edge_t in_to_out(edge_t e) {
+		return _in.translate_edge(e);
+	}
 
 
 	/**

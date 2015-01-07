@@ -989,10 +989,12 @@ public:
 #else
 		if (LL_EDGE_IS_WRITABLE(edge)) {
 			if (sizeof(T) == 4) {
-				return LL_EDGE_GET_WRITABLE(edge)->get_property_32<T>(_id);
+				uint32_t x = LL_EDGE_GET_WRITABLE(edge)->get_property_32<uint32_t>(_id);
+				return *((T*) (void*) &x);
 			}
 			else {
-				return LL_EDGE_GET_WRITABLE(edge)->get_property_64<T>(_id);
+				uint64_t x = LL_EDGE_GET_WRITABLE(edge)->get_property_64<uint64_t>(_id);
+				return *((T*) (void*) &x);
 			}
 		}
 
