@@ -1,0 +1,107 @@
+  FILES
+=========
+
+benchmark/                            - The benchmark suite
+|-- benchmark.cc                      - The main executable for benchmarks
+|-- benchmarks/                       - The actual benchmarks
+|   |-- avg_teen_cnt.h                - The "average teen count" benchmark
+|   |-- bc_adj.h                      - Betweenness centrality - exact
+|   |-- bc_random.h                   - Betweenness centrality - randomized
+|   |-- benchmark.h                   - The superclass of all benchmarks
+|   |-- bfs.h                         - Run BFS, count all reachable vertices
+|   |-- pagerank.h                    - Multiple PageRank implementations
+|   |-- sssp.h                        - Multiple SSSP / BFS implementations
+|   |-- tarjan_scc.h                  - Tarjan's SCC using DFS
+|   +-- triangle_counting.h           - Triangle counting implementations
+|-- Makefile                          - The Makefile
+|-- tests/                            - Some regression tests
+|   |-- delete_edges.h                - Tests for deleting edges
+|   +-- delete_nodes.h                - Tests for deleting nodes
++-- tools/                            - Tools
+    |-- cross_validate.h              - Check whether two graphs are identical
+    |-- degree_distribution.h         - Compute the degree distribution
+    |-- dump.h                        - Print the graph
+    |-- flatten.h                     - Flatten (merge all snapshots)
+    |-- level_spread.h                - Compute some per-level statistics
+    |-- print.h                       - Helpers for printing the graph
+    +-- property_stats.h              - Compute some property statistics
+
+docs/                                 - The documentation
+|-- FILES.txt                         - The list of files (this file)
++-- TODO.txt                          - The list of known bugs & TODO list
+
+examples/                             - Examples of simple LLAMA applications
+|-- llama-pagerank.cc                 - A standalone PageRank applications
++-- Makefile                          - The Makefile
+
+LICENSE                               - The license
+
+llama/                                - The implementation of LLAMA
++-- include                           - All header files
+    |-- llama                         - LLAMA header files
+    |   |-- ll_bfs_template.h         - A BFS template (adapted from GM)
+    |   |-- ll_common.h               - Shared definitions
+    |   |-- ll_config.h               - Configuration classes
+    |   |-- ll_database.h             - A high-level database class
+    |   |-- ll_dfs_template.h         - A DFS template (adapted from GM)
+    |   |-- ll_edge_table.h           - CSR edge table
+    |   |-- ll_external_sort.h        - An external sort routine
+    |   |-- ll_growable_array.h       - A growable array
+    |   |-- ll_lock.h                 - Locks and atomic functions
+    |   |-- ll_mem_array.h            - In-memory arrays, both flat and COW
+    |   |-- ll_mem_helper.h           - Various types of memory pools
+    |   |-- ll_mlcsr_graph.h          - The (multi-level CSR) read-only graph
+    |   |-- ll_mlcsr_helpers.h        - Various multi-level CSR helpers
+    |   |-- ll_mlcsr_iterator.h       - Definitions of edge and node iterators
+    |   |-- ll_mlcsr_properties.h     - Multi-level properties
+    |   |-- ll_mlcsr_sp.h             - The multi-level CSR implementation
+    |   |-- ll_page_manager.h         - Reference-counted page manager
+    |   |-- ll_persistent_storage.h   - Everything related to persistence
+    |   |-- ll_seq.h                  - The sequence container (from GM)
+    |   |-- ll_slcsr.h                - Traditional CSR implementation
+    |   |-- ll_streaming.h            - Helpers for streaming (SLOTH)
+    |   |-- ll_utils.h                - Miscellaneous utilities
+    |   |-- ll_writable_array.h       - Arrays used by the writable store
+    |   |-- ll_writable_elements.h    - Writable node and edge objects
+    |   |-- ll_writable_graph.h       - The writable store
+    |   +-- loaders                   - Various loaders
+    |       |-- ll_gen_erdosrenyi.h       - Random graph generator
+    |       |-- ll_gen_rmat.h             - R-MAT graph generator
+    |       |-- ll_load_async_writable.h  - Helpers for loading the write-store
+    |       |-- ll_loaders.h              - A collection of all loaders
+    |       |-- ll_load_fgf.h             - FGF loader
+    |       |-- ll_load_net.h             - SNAP edge-list loader
+    |       |-- ll_load_utils.h           - Common loader functionality
+    |       +-- ll_load_xstream1.h        - X-Stream Type 1 edge-list loader
+    +-- llama.h                       - One file to include everything relevant
+
+Makefile                              - The Makefile, builds almost everything
+
+misc/                                 - Miscellaneous
++-- frappe/                           - Tool running for Frappe-like workloads
+    |-- llama-frappe.cc               - The Frappe-like tool
+    +-- Makefile                      - The Makefile
+
+tests/                                - Some tests
+|-- data/                             - Data directory
+|-- expected/                         - Expected results
+|-- generate-report.py                - Generate a report from previous runs
++-- run-tests.sh                      - Run the tests
+
+tools/                                - LLAMA tool(s)
+|-- llama-load.cc                     - Load a persistent LLAMA database
++-- Makefile                          - The Makefile
+
+utils/                                - Miscellaneous utilities
+|-- Makefile                          - The Makefile
+|-- memhog.cpp                        - Allocate and hog memory until Ctrl-C
+|-- snap-to-xs1.cpp                   - Convert SNAP to X-Stream Type 1 (XS1)
+|-- xs1-add-duplicates.cpp            - Add duplicates to an XS1 data file
+|-- xs1-common.h                      - Common XS1 functionality and helpers
+|-- xs1-ini.cpp                       - Create an .ini file for an XS1 file
+|-- xs1-max-degree.cpp                - Determine the max degree in an XS1 file
+|-- xs1-reorder.cpp                   - Sort (or otherwise reorder) an XS1 file
+|-- xs1-shuffle.cpp                   - Randomize order of edges in an XS1 file
+|-- xs1-split.cpp                     - Split an XS1 file into multiple files
++-- xs1-to-snap.cpp                   - Convert an XS1 file into a SNAP file
+
