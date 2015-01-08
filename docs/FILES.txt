@@ -28,6 +28,7 @@ benchmark/                            - The benchmark suite
 
 docs/                                 - The documentation
 |-- FILES.txt                         - The list of files (this file)
+|-- README.txt                        - The README file
 +-- TODO.txt                          - The list of known bugs & TODO list
 
 examples/                             - Examples of simple LLAMA applications

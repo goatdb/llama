@@ -50,6 +50,14 @@ Potential solution:
      method should also return the length)
 
 
+ISSUE: A lot of streaming functionality is currently hard-coded in benchmark.cc
+
+LLAMA's streaming functionality is currently split between ll_streaming.h and
+benchmark.cc. We need to move everything to ll_streaming.h, refactor it, and
+then modify benchmark.cc to use it. This is necessary so that it will be easier
+to implement stand-alone streaming applications.
+
+
 ISSUE: Loading edge properties from persistent storage and their file format
 
 LLAMA can currently write edge properties to persistent storage, but it cannot
