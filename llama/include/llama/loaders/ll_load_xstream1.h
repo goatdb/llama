@@ -98,10 +98,16 @@ public:
 		c.lc_partial_load_part = 0;
 		c.lc_partial_load_num_parts = 0;
 
-		xs1_loader loader(file, config);
-
-		bool r = loader.load_direct(graph, &c);
-		if (!r) abort();
+		if (c.lc_no_properties) {
+			xs1_loader_unweighted loader(file, config);
+			bool r = loader.load_direct(graph, &c);
+			if (!r) abort();
+		}
+		else {
+			xs1_loader_weighted loader(file, config);
+			bool r = loader.load_direct(graph, &c);
+			if (!r) abort();
+		}
 	}
 
 
@@ -120,10 +126,16 @@ public:
 		c.lc_partial_load_part = 0;
 		c.lc_partial_load_num_parts = 0;
 
-		xs1_loader loader(file, config);
-
-		bool r = loader.load_incremental(graph, &c);
-		if (!r) abort();
+		if (c.lc_no_properties) {
+			xs1_loader_unweighted loader(file, config);
+			bool r = loader.load_incremental(graph, &c);
+			if (!r) abort();
+		}
+		else {
+			xs1_loader_weighted loader(file, config);
+			bool r = loader.load_incremental(graph, &c);
+			if (!r) abort();
+		}
 	}
 
 
@@ -134,7 +146,7 @@ public:
 	 * @return the data source
 	 */
 	virtual ll_data_source* create_data_source(const char* file) {
-		return new xs1_loader(file);
+		return new xs1_loader_weighted(file);
 	}
 
 
@@ -171,11 +183,12 @@ private:
 
 
 	/**
-	 * The direct loader for X-Stream Type 1 files
+	 * The direct loader for X-Stream Type 1 files -- base class
 	 */
-	class xs1_loader : public ll_edge_list_loader<unsigned,
-		true, float, LL_T_FLOAT>
+	class xs1_loader_base
 	{	
+
+	protected:
 
 		std::string _file_name;
 		FILE* _file;
@@ -193,13 +206,13 @@ private:
 	public:
 
 		/**
-		 * Create an instance of class xs1_loader
+		 * Create an instance of class xs1_loader_base
 		 *
 		 * @param file_name the file name
 		 * @param config the loader config
 		 */
-		xs1_loader(const char* file_name, const ll_loader_config* config = NULL)
-			: ll_edge_list_loader<unsigned, true, float, LL_T_FLOAT>() {
+		xs1_loader_base(const char* file_name,
+				const ll_loader_config* config = NULL) {
 
 			if (config != NULL) {
 				_config = *config;
@@ -285,7 +298,7 @@ private:
 				_edges = (file_edges * _config.lc_partial_load_part
 						/ _config.lc_partial_load_num_parts)
 					- (_start_offset / sizeof(xs1));
-				rewind();
+				fseek(_file, _start_offset, SEEK_SET);
 			}
 			else {
 				_start_offset = 0;
@@ -296,8 +309,38 @@ private:
 		/**
 		 * Destroy the loader
 		 */
-		virtual ~xs1_loader() {
+		virtual ~xs1_loader_base() {
 			if (_file != NULL) fclose(_file);
+		}
+	};
+
+
+	/**
+	 * The direct loader for X-Stream Type 1 files
+	 */
+	class xs1_loader_weighted : public xs1_loader_base,
+		public ll_edge_list_loader<unsigned, true, float, LL_T_FLOAT>
+	{	
+
+	public:
+
+		/**
+		 * Create an instance of class xs1_loader_weighted
+		 *
+		 * @param file_name the file name
+		 * @param config the loader config
+		 */
+		xs1_loader_weighted(const char* file_name,
+				const ll_loader_config* config = NULL)
+			: xs1_loader_base(file_name, config),
+			ll_edge_list_loader<unsigned, true, float, LL_T_FLOAT>() {
+		}
+
+
+		/**
+		 * Destroy the loader
+		 */
+		virtual ~xs1_loader_weighted() {
 		}
 
 
@@ -325,6 +368,93 @@ private:
 			*o_tail = e.tail;
 			*o_head = e.head;
 			*o_weight = e.weight;
+
+			return true;
+		}
+
+
+		/**
+		 * Rewind the input file
+		 */
+		virtual void rewind() {
+			fseek(_file, _start_offset, SEEK_SET);
+			_edges_loaded = 0;
+		}
+
+
+		/**
+		 * Get graph stats if they are available
+		 *
+		 * @param o_nodes the output for the number of nodes (1 + max node ID)
+		 * @param o_edges the output for the number of edges
+		 * @return true if succeeded, or false if not or the info is not available
+		 */
+		virtual bool stat(size_t* o_nodes, size_t* o_edges) {
+
+			if (_has_stats) {
+				*o_nodes = _nodes;
+				*o_edges = _edges;
+				return true;
+			}
+			else {
+				return false;
+			}
+		}
+	};
+
+
+	/**
+	 * The direct loader for X-Stream Type 1 files
+	 */
+	class xs1_loader_unweighted : public xs1_loader_base,
+		public ll_edge_list_loader<unsigned, false>
+	{	
+
+	public:
+
+		/**
+		 * Create an instance of class xs1_loader_unweighted
+		 *
+		 * @param file_name the file name
+		 * @param config the loader config
+		 */
+		xs1_loader_unweighted(const char* file_name,
+				const ll_loader_config* config = NULL)
+			: xs1_loader_base(file_name, config),
+			ll_edge_list_loader<unsigned, false>() {
+		}
+
+
+		/**
+		 * Destroy the loader
+		 */
+		virtual ~xs1_loader_unweighted() {
+		}
+
+
+	protected:
+
+		/**
+		 * Read the next edge
+		 *
+		 * @param o_tail the output for tail
+		 * @param o_head the output for head
+		 * @param o_weight the output for weight (ignore if HasWeight is false)
+		 * @return true if the edge was loaded, false if EOF or error
+		 */
+		virtual bool next_edge(unsigned* o_tail, unsigned* o_head,
+				float* o_weight) {
+
+			if (_edges_loaded >= _edges) return false;
+
+			xs1 e;
+			bool b = xs1_next(_file, &e);
+			if (!b) return false;
+
+			_edges_loaded++;
+
+			*o_tail = e.tail;
+			*o_head = e.head;
 
 			return true;
 		}
