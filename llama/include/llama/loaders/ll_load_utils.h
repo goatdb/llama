@@ -149,6 +149,7 @@ class ll_edge_list_loader : public ll_data_source {
 	struct xs_edge {
 		NodeType tail;
 		NodeType head;
+		WeightType weight[HasWeight ? 1 : 0];
 	};
 
 	/**
@@ -156,27 +157,6 @@ class ll_edge_list_loader : public ll_data_source {
 	 */
 	struct xs_edge_comparator {
 		bool operator() (const xs_edge& a, const xs_edge& b) {
-			if (a.tail != b.tail)
-				return a.tail < b.tail;
-			else
-				return a.head < b.head;
-		}
-	};
-
-	/**
-	 * Item format for external sort - for out-edges
-	 */
-	struct xs_w_edge {
-		NodeType tail;
-		NodeType head;
-		WeightType weight;
-	};
-
-	/**
-	 * Comparator for xs_w_edge
-	 */
-	struct xs_w_edge_comparator {
-		bool operator() (const xs_w_edge& a, const xs_w_edge& b) {
 			if (a.tail != b.tail)
 				return a.tail < b.tail;
 			else
@@ -364,7 +344,8 @@ public:
 		bool reverse = config->lc_reverse_edges;
 		bool load_weight = !config->lc_no_properties;
 
-		xs_w_edge e;
+		xs_edge e;
+		WeightType _w; (void) _w;	// Unused, here for memory safety
 
 		if (new_level > 0) {
 			if (max_nodes < (size_t) graph->out().max_nodes()) {
@@ -375,7 +356,7 @@ public:
 
 		// Initialize external sort
 
-		ll_external_sort<xs_w_edge, xs_w_edge_comparator>* out_sort = NULL;
+		ll_external_sort<xs_edge, xs_edge_comparator>* out_sort = NULL;
 
 
 		// Get the degrees
@@ -406,8 +387,8 @@ public:
 		bool out_called_sort = false;
 		if (config->lc_direction == LL_L_UNDIRECTED_DOUBLE) {
 			already_sorted = false;
-			out_sort = new ll_external_sort<xs_w_edge,
-					 xs_w_edge_comparator>(config);
+			out_sort = new ll_external_sort<xs_edge,
+					 xs_edge_comparator>(config);
 		}
 
 		size_t step = 10 * 1000 * 1000ul;
@@ -426,11 +407,11 @@ public:
 
 			if (already_sorted) {
 				already_sorted = false;
-				out_sort = new ll_external_sort<xs_w_edge,
-						 xs_w_edge_comparator>(config);
+				out_sort = new ll_external_sort<xs_edge,
+						 xs_edge_comparator>(config);
 			}
 
-			while (next_edge(&e.tail, &e.head, &e.weight)) {
+			while (next_edge(&e.tail, &e.head, &e.weight[0])) {
 				max_edges++;
 
 				if (config->lc_direction == LL_L_UNDIRECTED_ORDERED) {
@@ -494,7 +475,7 @@ public:
 			out_sort->sort();
 			out_called_sort = true;
 
-			xs_w_edge* buffer;
+			xs_edge* buffer;
 			size_t length;
 			size_t index = 0;
 
@@ -546,7 +527,7 @@ public:
 
 			size_t loaded_edges = 0;
 
-			while (next_edge(&e.tail, &e.head, &e.weight)) {
+			while (next_edge(&e.tail, &e.head, &e.weight[0])) {
 				max_edges++;
 				loaded_edges++;
 
@@ -572,8 +553,8 @@ public:
 									* degrees_capacity);
 						}
 
-						out_sort = new ll_external_sort<xs_w_edge,
-								 xs_w_edge_comparator>(config);
+						out_sort = new ll_external_sort<xs_edge,
+								 xs_edge_comparator>(config);
 						continue;
 					}
 				}
@@ -726,7 +707,7 @@ public:
 			last_tail = LL_NIL_NODE;
 
 			size_t index = 0;
-			while (next_edge(&e.tail, &e.head, &e.weight)) {
+			while (next_edge(&e.tail, &e.head, &e.weight[0])) {
 
 				if (config->lc_direction == LL_L_UNDIRECTED_ORDERED) {
 					if (e.tail > e.head) {
@@ -755,7 +736,7 @@ public:
 
 				if (HasWeight && load_weight) {
 					edge_t edge = LL_EDGE_CREATE(new_level, index);
-					prop_weight->cow_write(edge, e.weight);
+					prop_weight->cow_write(edge, e.weight[0]);
 				}
 
 				if (reverse) {
@@ -791,7 +772,7 @@ public:
 			else
 				out_sort->sort();
 
-			xs_w_edge* buffer;
+			xs_edge* buffer;
 			size_t length;
 			size_t index = 0;
 			size_t num_duplicates = 0;
@@ -891,7 +872,7 @@ public:
 
 					if (HasWeight && load_weight) {
 						edge_t edge = LL_EDGE_CREATE(new_level, index);
-						prop_weight->cow_write(edge, e.weight);
+						prop_weight->cow_write(edge, e.weight[0]);
 					}
 
 					if (reverse) {
@@ -1110,10 +1091,11 @@ public:
 		size_t chunk_size = config->lc_max_edges;
 		bool load_weight = !config->lc_no_properties;
 
-		xs_w_edge e;
+		xs_edge e;
+		WeightType _w; (void) _w;	// Unused, here for memory safety
 		bool has_more;
 
-		while ((has_more = next_edge(&e.tail, &e.head, &e.weight))) {
+		while ((has_more = next_edge(&e.tail, &e.head, &e.weight[0]))) {
 			max_edges++;
 
 			LL_D_NODE2_PRINT(e.tail, e.head, "%u --> %u\n", (unsigned) e.tail,
@@ -1419,7 +1401,8 @@ private:
 		size_t max_nodes = 0;
 		size_t max_edges = 0;
 
-		xs_w_edge e;
+		xs_edge e;
+		WeightType _w; (void) _w;	// Unused, here for memory safety
 		
 		if (!stat(&max_nodes, &max_edges)) {
 			LL_E_PRINT("The graph stat call failed\n");
@@ -1498,7 +1481,7 @@ private:
 
 			was_sorted = true;
 
-			while (next_edge(&e.tail, &e.head, &e.weight)) {
+			while (next_edge(&e.tail, &e.head, &e.weight[0])) {
 				loaded_edges++;
 
 				if (config->lc_max_edges > 0
@@ -1552,7 +1535,7 @@ private:
 				// Load the edge into the buffer
 
 				adj_list_buffer.push_back(e.head);
-				if (HasWeight && load_weight) weight_buffer.push_back(e.weight);
+				if (HasWeight && load_weight) weight_buffer.push_back(e.weight[0]);
 
 
 				// Progress
@@ -1587,15 +1570,15 @@ private:
 
 		if (!was_sorted) {
 
-			ll_external_sort<xs_w_edge, xs_w_edge_comparator>* out_sort
-				= new ll_external_sort<xs_w_edge, xs_w_edge_comparator>(config);
+			ll_external_sort<xs_edge, xs_edge_comparator>* out_sort
+				= new ll_external_sort<xs_edge, xs_edge_comparator>(config);
 
 			NodeType last_tail = (NodeType) LL_NIL_NODE;
 			NodeType last_head = (NodeType) LL_NIL_NODE;
 
 			size_t read_edges = 0;
 
-			while (next_edge(&e.tail, &e.head, &e.weight)) {
+			while (next_edge(&e.tail, &e.head, &e.weight[0])) {
 				loaded_edges++;
 				read_edges++;
 
@@ -1642,7 +1625,7 @@ private:
 
 			out_sort->sort();
 
-			xs_w_edge* buffer;
+			xs_edge* buffer;
 			size_t length;
 
 			std::vector<NodeType> adj_list_buffer;
@@ -1685,7 +1668,7 @@ private:
 
 					adj_list_buffer.push_back(buffer->head);
 					if (HasWeight && load_weight)
-						weight_buffer.push_back(e.weight);
+						weight_buffer.push_back(e.weight[0]);
 
 					buffer++;
 
