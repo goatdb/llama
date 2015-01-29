@@ -1710,6 +1710,11 @@ private:
 				load_node_out(graph, et, new_level, last_tail, adj_list_buffer,
 						weight_buffer, prop_weight, in_sort);
 			}
+
+
+			// Clean-up
+
+			delete out_sort;
 		}
 
 
