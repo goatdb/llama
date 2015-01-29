@@ -1570,6 +1570,14 @@ private:
 
 		if (!was_sorted) {
 
+
+			// Temporarily free some memory to make space for sort
+
+			graph->out().et_free();
+
+
+			// Load into external sort
+
 			ll_external_sort<xs_edge, xs_edge_comparator>* out_sort
 				= new ll_external_sort<xs_edge, xs_edge_comparator>(config);
 
@@ -1624,6 +1632,11 @@ private:
 			}
 
 			out_sort->sort();
+
+			et = graph->out().et_reinit();
+
+
+			// Now load the CSR
 
 			xs_edge* buffer;
 			size_t length;

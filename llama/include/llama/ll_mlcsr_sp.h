@@ -735,6 +735,53 @@ public:
 
 
 	/**
+	 * Temporarily deinitialize the edge table to free memory if possible
+	 * (useful when loading).
+	 *
+	 * Use this only if you know what you are doing and only if you use
+	 * init_level() directly without using init_level_from_degrees().
+	 */
+	void et_free() {
+#ifndef LL_PERSISTENCE
+		if (this->_latest_values == NULL) return;
+		assert(this->_latest_values == this->_values[this->_maxLevel]);
+
+		DELETE_LL_ET<T>(this->_latest_values);
+
+		this->_latest_values = NULL;
+		this->_values[this->_maxLevel] = NULL;
+#endif
+	}
+
+
+	/**
+	 * Recreate the edge table after et_free() (useful when loading).
+	 *
+	 * Use this only if you know what you are doing.
+	 *
+	 * @return the edge table
+	 */
+	LL_ET<T>* et_reinit() {
+
+#ifndef LL_PERSISTENCE
+		int level = this->_maxLevel;
+		size_t max_nodes = this->_perLevelNodes[level];
+		size_t max_adj_lists = this->_perLevelAdjLists[level];
+		size_t max_edges = this->_perLevelEdges[level];
+
+		size_t et_capacity = values_length(level, max_nodes + 4,
+				max_adj_lists + 4, max_edges);
+		auto et = NEW_LL_ET<T>(et_capacity, max_nodes);
+
+		this->_latest_values = et;
+		this->_values[level] = et;
+#endif
+
+		return this->_latest_values;
+	}
+
+
+	/**
 	 * Initialize a level from an array of node degrees. This creates a fully
 	 * initialized vertex table and a partially initialized edge table.
 	 *
