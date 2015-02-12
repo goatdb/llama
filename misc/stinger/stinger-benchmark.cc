@@ -73,12 +73,13 @@ extern "C" {
 // The Command-Line Arguments                                               //
 //==========================================================================//
 
-static const char* SHORT_OPTIONS = "c:ht:v";
+static const char* SHORT_OPTIONS = "c:hIt:v";
 
 static struct option LONG_OPTIONS[] =
 {
 	{"count"        , required_argument, 0, 'c'},
 	{"help"         , no_argument,       0, 'h'},
+	{"incremental"  , no_argument,       0, 'I'},
 	{"threads"      , required_argument, 0, 't'},
 	{"verbose"      , no_argument,       0, 'v'},
 	{0, 0, 0, 0}
@@ -100,6 +101,7 @@ static void usage(const char* arg0) {
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -c, --count N         Set the number of experiment runs\n");
 	fprintf(stderr, "  -h, --help            Show this usage information and exit\n");
+	fprintf(stderr, "  -I, --incremental     Use incremental load instead of bulk-load\n");
 	fprintf(stderr, "  -t, --threads N       Set the number of threads\n");
 	fprintf(stderr, "  -v, --verbose         Enable verbose output\n");
 }
@@ -475,6 +477,10 @@ int main(int argc, char** argv)
 			case 'h':
 				usage(argv[0]);
 				return 0;
+
+			case 'I':
+				load_incremental = true;
+				break;
 
 			case 't':
 				num_threads = atoi(optarg);
