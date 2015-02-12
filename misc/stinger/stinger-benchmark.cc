@@ -565,7 +565,9 @@ int main(int argc, char** argv)
 				t_load_ms / 1000, t_load_ms / 60000);
 		if (count > 1) fprintf(stderr, "\n");
 
-		if (verbose) fprintf(stderr, "Computing:%s", count > 1 ? "\n" : " ");
+		if (verbose || count == 1) {
+			fprintf(stderr, "Computing:%s", count > 1 ? "\n" : " ");
+		}
 		for (int i = 1; i <= count; i++) {
 			if (verbose && count > 1) fprintf(stderr, "  ");
 			if (count > 1) fprintf(stderr, "Run %d: ", i);
