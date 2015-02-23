@@ -101,10 +101,12 @@ int main(int argc, char** argv) {
 
 	bool undirected = false;
 	std::string output = "";
-	const char* delimiters = " \t";
 
 	bool progress = true;
 	size_t progress_step = 10000000;
+
+	const char* delimiters = " \t";
+	size_t max_ignored_errors = 100;
 
 
 	// Pase the command-line arguments
@@ -189,6 +191,7 @@ int main(int argc, char** argv) {
 	char* line = (char*) malloc(line_len);
 
 	std::unordered_map<std::string, unsigned> node_map;
+	size_t errors = 0;
 
 	while ((read = getline(&line, &line_len, f_in)) != -1) {
 
@@ -207,9 +210,15 @@ int main(int argc, char** argv) {
 			if (x != NULL && (sep == NULL || (long) x < (long) sep)) sep = x;
 		}
 		if (sep == NULL) {
-			fprintf(stderr, "Invalid edge-list format on line %lu: %s\n",
+			fprintf(stderr, "\rInvalid edge-list format on line %lu: %s\n",
 					num_lines, line);
-			abort();
+			if ((errors++) >= max_ignored_errors) {
+				fprintf(stderr, "Too many errors\n");
+				abort();
+			}
+			else {
+				continue;
+			}
 		}
 
 		char* s_tail = l;
@@ -219,9 +228,15 @@ int main(int argc, char** argv) {
 
 		while (isspace(*l)) l++;
 		if (*l == '\0' || *l == '#' || *l == '\n' || *l == '\r') {
-			fprintf(stderr, "Invalid edge-list format on line %lu: %s\n",
+			fprintf(stderr, "\rInvalid edge-list format on line %lu: %s\n",
 					num_lines, line);
-			abort();
+			if ((errors++) >= max_ignored_errors) {
+				fprintf(stderr, "Too many errors\n");
+				abort();
+			}
+			else {
+				continue;
+			}
 		}
 
 		char* s_head = l;
@@ -235,9 +250,15 @@ int main(int argc, char** argv) {
 			if (x != NULL && (sep == NULL || (long) x < (long) sep)) sep = x;
 		}
 		if (sep != NULL) {
-			fprintf(stderr, "Invalid edge-list format on line %lu: %s\n",
+			fprintf(stderr, "\rInvalid edge-list format on line %lu: %s\n",
 					num_lines, line);
-			abort();
+			if ((errors++) >= max_ignored_errors) {
+				fprintf(stderr, "Too many errors\n");
+				abort();
+			}
+			else {
+				continue;
+			}
 		}
 
 
