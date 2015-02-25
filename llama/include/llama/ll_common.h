@@ -140,6 +140,19 @@ struct ll_edge_comparator {
 };
 
 
+/**
+ * Compare two instances of node_pair_t
+ *
+ * @param a the first object
+ * @param b the first object
+ * @return true if a < b
+ */
+inline bool operator< (const node_pair_t& a, const node_pair_t& b) {
+	if (a.tail != b.tail) return a.tail < b.tail;
+	return a.head < b.head;
+}
+
+
 
 //==========================================================================//
 // Advice constants                                                         //

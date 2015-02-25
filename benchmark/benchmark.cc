@@ -1270,7 +1270,7 @@ double run_benchmark(Graph& graph, ll_benchmark<Graph>* benchmark,
 /**
  * Customization of the direct continuous loader
  */
-class my_continuous_direct_loader : public ll_continuous_direct_loader {
+class my_continuous_direct_loader : public ll_stream_buffer_loader {
 
 	ll_database* _database;
 	ll_benchmark_stats& _stats;
@@ -1278,9 +1278,10 @@ class my_continuous_direct_loader : public ll_continuous_direct_loader {
 	int _streaming_window;
 
 	volatile int _last_good_level;
+	ll_writable_graph* _graph;
 
 #ifdef LL_S_SINGLE_SNAPSHOT
-	std::deque<std::vector<ll_cdl_edge_data_t>*> _buffer_queue;
+	std::deque<std::vector<node_pair_t>*> _buffer_queue;
 	ll_spinlock_t _buffer_queue_lock;
 #endif
 
@@ -1294,7 +1295,6 @@ public:
 	 * @param database the database
 	 * @param data_source the data source
 	 * @param config the streaming configuration
-	 * @param lock the whole-graph lock (must be released to proceed)
 	 * @param stats the stats
 	 * @param loader_config the loader config
 	 * @param streaming_window the streaming window size
@@ -1303,13 +1303,12 @@ public:
 			ll_database* database,
 			ll_data_source* data_source,
 			const ll_stream_config* config,
-			ll_spinlock_t* lock,
 			ll_benchmark_stats* stats,
 			ll_loader_config* loader_config,
 			int streaming_window) 
-		: ll_continuous_direct_loader(graph, data_source, config, lock),
+		: ll_stream_buffer_loader(data_source, config),
 		  _database(database), _stats(*stats), _loader_config(loader_config),
-		  _streaming_window(streaming_window)
+		  _streaming_window(streaming_window), _graph(graph)
 	{
 		_last_good_level = -1;
 
@@ -1368,84 +1367,12 @@ public:
 
 protected:
 
-#ifdef LL_S_SINGLE_SNAPSHOT
-
-	class buffer_queue_loader : public ll_edge_list_loader<node_t, false> {
-
-		std::deque<std::vector<ll_cdl_edge_data_t>*>* _buffer_queue;
-		std::deque<std::vector<ll_cdl_edge_data_t>*>::iterator _buffer_queue_iterator;
-		size_t _inner_index;
-
-
-	public:
-
-		/**
-		 * Create an instance of class buffer_queue_loader
-		 *
-		 * @param buffer_queue the buffer queue
-		 */
-		buffer_queue_loader(std::deque<std::vector<ll_cdl_edge_data_t>*>* buffer_queue)
-			: ll_edge_list_loader<node_t, false>() {
-			_buffer_queue = buffer_queue;
-			rewind();
-		}
-
-
-		/**
-		 * Destroy the loader
-		 */
-		virtual ~buffer_queue_loader() {
-		}
-
-
-	protected:
-
-		/**
-		 * Read the next edge
-		 *
-		 * @param o_tail the output for tail
-		 * @param o_head the output for head
-		 * @param o_weight the output for weight (ignore if HasWeight is false)
-		 * @return true if the edge was loaded, false if EOF or error
-		 */
-		virtual bool next_edge(node_t* o_tail, node_t* o_head,
-				float* o_weight) {
-
-			if (_buffer_queue_iterator == _buffer_queue->end()) return false;
-
-			std::vector<ll_cdl_edge_data_t>* b = *_buffer_queue_iterator;
-			if (_inner_index >= b->size()) {
-				_buffer_queue_iterator++;
-				_inner_index = 0;
-				if (_buffer_queue_iterator == _buffer_queue->end()) return false;
-			}
-
-			*o_tail = (*b)[_inner_index].tail;
-			*o_head = (*b)[_inner_index].head;
-			_inner_index++;
-
-			return true;
-		}
-
-
-		/**
-		 * Rewind the input file
-		 */
-		virtual void rewind() {
-			_buffer_queue_iterator = _buffer_queue->begin();
-			_inner_index = 0;
-		}
-	};
-
-#endif
-
-
 	/**
 	 * Run a task - override to do something useful with the buffer
 	 *
 	 * @param buffer the buffer
 	 */
-	virtual void task(std::vector<ll_cdl_edge_data_t>& buffer) {
+	virtual void task(std::vector<node_pair_t>& buffer) {
 
 #ifdef LL_S_SINGLE_SNAPSHOT
 
@@ -1457,7 +1384,7 @@ protected:
 		// TODO Or should I create a new database instead?
 		ll_writable_graph* g = new ll_writable_graph(_database, 80*1000000/*XXX*/);
 
-		std::vector<ll_cdl_edge_data_t>* last_buffer
+		std::vector<node_pair_t>* last_buffer
 			= swap_buffers(false /* do not lock */);
 
 		ll_spinlock_acquire(&_buffer_queue_lock);
@@ -1470,7 +1397,8 @@ protected:
 
 		_stats.before_load_cp();
 
-		buffer_queue_loader* loader = new buffer_queue_loader(&_buffer_queue);
+		ll_node_pair_queue_loader* loader
+			= new ll_node_pair_queue_loader(&_buffer_queue);
 		bool b = loader->load_direct(&g->ro_graph(), _loader_config);
 		if (!b) abort();
 		delete loader;
@@ -1487,7 +1415,7 @@ protected:
 		ll_writable_graph& graph = *_graph;
 
 		_stats.before_load_cp();
-		ll_cdl_loader* loader = new ll_cdl_loader(&buffer, false);
+		ll_node_pair_loader* loader = new ll_node_pair_loader(&buffer, false);
 		bool b = loader->load_direct(&graph.ro_graph(), _loader_config);
 		if (!b) abort();
 		delete loader;
@@ -2223,7 +2151,6 @@ int main(int argc, char** argv)
 
 	counter.current_batch++;
 
-	ll_spinlock_t global_lock = 0;
 	volatile bool done = false;
 	double t_behind_ms = 0;
 
@@ -2235,11 +2162,11 @@ int main(int argc, char** argv)
 			&graph,
 #	endif
 			&database,
-			&combined_data_source, &stream_config, &global_lock,
+			&combined_data_source, &stream_config,
 			&stats, &loader_config, streaming_window);
 #else
-	ll_continuous_loader continuous_loader(&graph, &combined_data_source,
-			&stream_config, &global_lock);
+	ll_stream_writable_loader continuous_loader(&graph, &combined_data_source,
+			&stream_config, &loader_config);
 #endif
 
 	stats.stream_stats = &continuous_loader.stats();
@@ -2285,40 +2212,9 @@ int main(int argc, char** argv)
 							> 100 * 1000) continuous_loader.drain();
 				}
 
-				ll_spinlock_acquire(&global_lock);
-
-				stats.before_load_cp();
-#ifdef LL_S_DIRECT
-				ll_cdl_loader* loader = new ll_cdl_loader(
-						continuous_loader.swap_buffers(), true);
-				bool b = loader->load_direct(&graph.ro_graph(), &loader_config);
-				if (!b) abort();
-				delete loader;
-#else
-				graph.checkpoint(&loader_config);
-#endif
-				stats.after_load_cp();
-
 				stats.before_advance_window();
-
-#ifdef LL_STREAMING
-				if (streaming_window > 0
-						&& graph.num_levels() >= (size_t) streaming_window) {
-					graph.set_min_level(graph.num_levels() - streaming_window);
-					if (graph.num_levels() >= (size_t) streaming_window + 3) {
-						graph.delete_level(graph.num_levels()
-								- streaming_window - 3);
-					}
-				}
-#endif
-
-				// Drop old versions
-				graph.ro_graph().keep_only_recent_versions(1);
-
-				ll_spinlock_release(&global_lock);
+				last_good_level = continuous_loader.advance(streaming_window, 1);
 				stats.after_advance_window();
-
-				last_good_level = graph.ro_graph().num_levels() - 1;
 
 #else /* if defined LL_S_DIRECT */
 

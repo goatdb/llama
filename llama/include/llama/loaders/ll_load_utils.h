@@ -42,6 +42,7 @@
 #include <cstring>
 #include <unistd.h>
 
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -1819,12 +1820,12 @@ private:
 
 
 /**
- * The direct loader for ll_cdl_edge_data_t buffers
+ * The direct loader for node_pair_t buffers
  */
-class ll_cdl_loader : public ll_edge_list_loader<node_t, false>
+class ll_node_pair_loader : public ll_edge_list_loader<node_t, false>
 {	
 
-	std::vector<ll_cdl_edge_data_t>* _buffer;
+	std::vector<node_pair_t>* _buffer;
 	size_t _index;
 	bool _own;
 
@@ -1832,12 +1833,12 @@ class ll_cdl_loader : public ll_edge_list_loader<node_t, false>
 public:
 
 	/**
-	 * Create an instance of class ll_cdl_loader
+	 * Create an instance of class ll_node_pair_loader
 	 *
 	 * @param buffer the buffer
 	 * @param own true to transfer ownership of the buffer to this object
 	 */
-	ll_cdl_loader(std::vector<ll_cdl_edge_data_t>* buffer, bool own = false)
+	ll_node_pair_loader(std::vector<node_pair_t>* buffer, bool own = false)
 		: ll_edge_list_loader<node_t, false>() {
 		_buffer = buffer;
 		_index = 0;
@@ -1848,7 +1849,7 @@ public:
 	/**
 	 * Destroy the loader
 	 */
-	virtual ~ll_cdl_loader() {
+	virtual ~ll_node_pair_loader() {
 		if (_own) delete _buffer;
 	}
 
@@ -1893,6 +1894,77 @@ public:
 	 */
 	inline size_t size() const {
 		return _buffer->size();
+	}
+};
+
+
+/**
+ * Loader for a queue of node_pair_t buffers
+ */
+class ll_node_pair_queue_loader : public ll_edge_list_loader<node_t, false> {
+
+	std::deque<std::vector<node_pair_t>*>* _buffer_queue;
+	std::deque<std::vector<node_pair_t>*>::iterator _buffer_queue_iterator;
+	size_t _inner_index;
+
+
+public:
+
+	/**
+	 * Create an instance of class ll_node_pair_queue_loader
+	 *
+	 * @param buffer_queue the buffer queue
+	 */
+	ll_node_pair_queue_loader(std::deque<std::vector<node_pair_t>*>* buffer_queue)
+		: ll_edge_list_loader<node_t, false>() {
+		_buffer_queue = buffer_queue;
+		rewind();
+	}
+
+
+	/**
+	 * Destroy the loader
+	 */
+	virtual ~ll_node_pair_queue_loader() {
+	}
+
+
+protected:
+
+	/**
+	 * Read the next edge
+	 *
+	 * @param o_tail the output for tail
+	 * @param o_head the output for head
+	 * @param o_weight the output for weight (ignore if HasWeight is false)
+	 * @return true if the edge was loaded, false if EOF or error
+	 */
+	virtual bool next_edge(node_t* o_tail, node_t* o_head,
+			float* o_weight) {
+
+		if (_buffer_queue_iterator == _buffer_queue->end()) return false;
+
+		std::vector<node_pair_t>* b = *_buffer_queue_iterator;
+		if (_inner_index >= b->size()) {
+			_buffer_queue_iterator++;
+			_inner_index = 0;
+			if (_buffer_queue_iterator == _buffer_queue->end()) return false;
+		}
+
+		*o_tail = (*b)[_inner_index].tail;
+		*o_head = (*b)[_inner_index].head;
+		_inner_index++;
+
+		return true;
+	}
+
+
+	/**
+	 * Rewind the input file
+	 */
+	virtual void rewind() {
+		_buffer_queue_iterator = _buffer_queue->begin();
+		_inner_index = 0;
 	}
 };
 

@@ -38,6 +38,7 @@
 #define LL_STREAMING_H_
 
 #include "llama/ll_common.h"
+#include "llama/ll_data_source.h"
 #include "llama/ll_mlcsr_graph.h"
 #include "llama/ll_writable_graph.h"
 #include "llama/loaders/ll_load_async_writable.h"
@@ -177,81 +178,22 @@ public:
 
 
 /**
- * The pull-based data source
+ * A database loader that pulls continuously into the writable graph. Call
+ * advance() to advance the sliding window.
  */
-class ll_data_source {
-
-public:
-
-	/**
-	 * Create an instance of the data source wrapper
-	 */
-	inline ll_data_source() {}
-
-
-	/**
-	 * Destroy the data source
-	 */
-	virtual ~ll_data_source() {}
-
-
-	/**
-	 * Is this a simple data source? A simple data source has only edges with
-	 * predefined node IDs.
-	 *
-	 * A simple data source needs to additionally implement:
-	 *   * next_edge()
-	 */
-	virtual bool simple() { return false; }
-
-
-	/**
-	 * Load the next batch of data
-	 *
-	 * @param graph the writable graph
-	 * @param max_edges the maximum number of edges
-	 * @return true if data was loaded, false if there are no more data
-	 */
-	virtual bool pull(ll_writable_graph* graph, size_t max_edges) = 0;
-
-
-	/**
-	 * Load the next batch of data to request queues
-	 *
-	 * @param request_queues the request queues
-	 * @param num_stripes the number of stripes (queues array length)
-	 * @param max_edges the maximum number of edges
-	 * @return true if data was loaded, false if there are no more data
-	 */
-	virtual bool pull(ll_la_request_queue** request_queues, size_t num_stripes,
-			size_t max_edges) = 0;
-
-
-	/**
-	 * Get the next edge
-	 *
-	 * @param o_tail the output for tail
-	 * @param o_head the output for head
-	 * @return true if the edge was loaded, false if EOF or error
-	 */
-	virtual bool next_edge(node_t* o_tail, node_t* o_head) { abort(); }
-};
-
-
-/**
- * A database loader that pulls continuously
- */
-class ll_continuous_loader {
+class ll_stream_writable_loader {
 
 	size_t _num_stripes;
 	ll_la_request_queue** _request_queues;
 
 	ll_writable_graph* _graph;
 	ll_data_source* _data_source;
+
 	ll_stream_config _config;
+	ll_loader_config _loader_config;
 
 	volatile bool _terminate;
-	ll_spinlock_t* _lock;
+	ll_spinlock_t _lock;
 	ll_stream_stats _stats;
 
 	std::atomic<size_t> _requests_in_current_batch;
@@ -260,18 +202,18 @@ class ll_continuous_loader {
 public:
 
 	/**
-	 * Create an instance of class ll_continuous_loader
+	 * Create an instance of class ll_stream_writable_loader
 	 *
 	 * @param graph the writable graph
 	 * @param data_source the data source
 	 * @param config the streaming configuration
-	 * @param lock the whole-graph lock (must be released to proceed)
+	 * @param loader_config the loader configuration (used in advance())
 	 */
-	ll_continuous_loader(ll_writable_graph* graph,
+	ll_stream_writable_loader(ll_writable_graph* graph,
 			ll_data_source* data_source,
 			const ll_stream_config* config,
-			ll_spinlock_t* lock) 
-		: _config(*config)
+			const ll_loader_config* loader_config)
+		: _config(*config), _loader_config(*loader_config)
 	{
 
 		assert(graph != NULL);
@@ -279,7 +221,7 @@ public:
 		_terminate = false;
 		_graph = graph;
 		_data_source = data_source;
-		_lock = lock;
+		_lock = 0;
 		_requests_in_current_batch = 0;
 
 		_num_stripes = omp_get_max_threads();
@@ -295,7 +237,7 @@ public:
 	/**
 	 * Destroy the object
 	 */
-	virtual ~ll_continuous_loader() {
+	virtual ~ll_stream_writable_loader() {
 
 		for (size_t i = 0; i < _num_stripes; i++) delete _request_queues[i];
 		free(_request_queues);
@@ -387,7 +329,7 @@ public:
 			uint64_t t;
 			size_t processed = 0;
 			while ((t = ll_rdtsc()) < t_stop_at) {
-				if (ll_spinlock_try_acquire(_lock)) {
+				if (ll_spinlock_try_acquire(&_lock)) {
 					bool r = false;
 					for (size_t i = 0; i < _num_stripes; i++) {
 						if (_request_queues[i]->process_next(*_graph)) {
@@ -395,7 +337,7 @@ public:
 							r = true;
 						}
 					}
-					ll_spinlock_release(_lock);
+					ll_spinlock_release(&_lock);
 					if (!r) break;
 				}
 				else {
@@ -447,6 +389,8 @@ public:
 	 */
 	void drain() {
 
+		// XXX Should I lock???
+
 #	pragma omp parallel
 		{
 			int t = omp_get_thread_num() % _num_stripes;
@@ -468,45 +412,55 @@ public:
 			//LL_I_PRINT("Drained %lu\n", processed);
 		}
 	}
+
+
+	/**
+	 * Advance the sliding window
+	 *
+	 * @param window the number of snapshots in the sliding window (-1 = all)
+	 * @param keep the number of read-optimized levels to keep (-1 = all)
+	 * @return the number of the level that was just created
+	 */
+	int advance(int window=-1, int keep=-1) {
+
+		ll_spinlock_acquire(&_lock);
+
+		_graph->checkpoint(&_loader_config);
+
+#ifdef LL_STREAMING
+		if (window > 0 && _graph->num_levels() >= (size_t) window) {
+			_graph->set_min_level(_graph->num_levels() - window);
+			if (_graph->num_levels() >= (size_t) window + 3) {
+				_graph->delete_level(_graph->num_levels() - window - 3);
+			}
+		}
+#endif
+
+		if (keep > 0) _graph->ro_graph().keep_only_recent_versions(keep);
+
+		int l = ((int) _graph->ro_graph().num_levels()) - 1;
+		ll_spinlock_release(&_lock);
+
+		return l;
+	}
 };
 
 
 /**
- * The edge data structure used by ll_continuous_direct_loader
+ * A database loader that pulls continuously into a buffer of node pairs. Call
+ * swap_buffers() to obtain a loaded buffer. You can also use the built-in
+ * task mechanism to perform loading actions using the loader thread.
  */
-typedef struct {
-	node_t tail;
-	node_t head;
-} ll_cdl_edge_data_t;
-
-
-/**
- * Compare two instances of ll_cdl_edge_data_t
- *
- * @param a the first object
- * @param b the first object
- * @return true if a < b
- */
-inline bool operator< (const ll_cdl_edge_data_t& a, const ll_cdl_edge_data_t& b) {
-	if (a.tail != b.tail) return a.tail < b.tail;
-	return a.head < b.head;
-}
-
-
-/**
- * A database loader that pulls continuously
- */
-class ll_continuous_direct_loader {
+class ll_stream_buffer_loader {
 
 	size_t _num_stripes;
-	std::vector<ll_cdl_edge_data_t>* _buffer;
+	std::vector<node_pair_t>* _buffer;
 	ll_spinlock_t _buffer_lock;
 
 	ll_data_source* _data_source;
 	ll_stream_config _config;
 
 	volatile bool _terminate;
-	ll_spinlock_t* _lock;
 	ll_stream_stats _stats;
 
 	std::atomic<size_t> _requests_in_current_batch;
@@ -514,42 +468,26 @@ class ll_continuous_direct_loader {
 	volatile bool _run_task;
 
 
-protected:
-
-	ll_writable_graph* _graph;
-
-
 public:
 
 	/**
-	 * Create an instance of class ll_continuous_direct_loader
+	 * Create an instance of class ll_stream_buffer_loader
 	 *
-	 * @param graph the writable graph
 	 * @param data_source the data source
 	 * @param config the streaming configuration
-	 * @param lock the whole-graph lock (must be released to proceed)
 	 */
-	ll_continuous_direct_loader(ll_writable_graph* graph,
-			ll_data_source* data_source,
-			const ll_stream_config* config,
-			ll_spinlock_t* lock) 
+	ll_stream_buffer_loader(ll_data_source* data_source,
+			const ll_stream_config* config)
 		: _config(*config)
 	{
-
-#ifndef LL_S_SINGLE_SNAPSHOT
-		assert(graph != NULL);
-#endif
-
 		_terminate = false;
 		_run_task = false;
 
-		_graph = graph;
 		_data_source = data_source;
-		_lock = lock;
 		_requests_in_current_batch = 0;
 
 		_num_stripes = omp_get_max_threads();
-		_buffer = new std::vector<ll_cdl_edge_data_t>();
+		_buffer = new std::vector<node_pair_t>();
 		_buffer_lock = 0;
 	}
 
@@ -557,7 +495,7 @@ public:
 	/**
 	 * Destroy the object
 	 */
-	virtual ~ll_continuous_direct_loader() {
+	virtual ~ll_stream_buffer_loader() {
 
 		delete _buffer;
 	}
@@ -639,7 +577,7 @@ public:
 			if (batch_size > 0) {
 				ll_spinlock_acquire(&_buffer_lock);
 				for (size_t i = 0; i < batch_size; i++) {
-					ll_cdl_edge_data_t x;
+					node_pair_t x;
 					if (!_data_source->next_edge(&x.tail, &x.head)) break;
 					_buffer->push_back(x);
 					//push_heap(_buffer->begin(), _buffer->end());
@@ -697,7 +635,7 @@ public:
 	 *
 	 * @return the buffer (must be deleted by the caller!)
 	 */
-	std::vector<ll_cdl_edge_data_t>* swap_buffers() {
+	std::vector<node_pair_t>* swap_buffers() {
 		return swap_buffers(true);
 	}
 
@@ -718,7 +656,7 @@ protected:
 	 *
 	 * @param buffer the buffer
 	 */
-	virtual void task(std::vector<ll_cdl_edge_data_t>& buffer) {}
+	virtual void task(std::vector<node_pair_t>& buffer) {}
 
 
 	/**
@@ -727,11 +665,11 @@ protected:
 	 * @param lock true to lock
 	 * @return the buffer (must be deleted by the caller!)
 	 */
-	std::vector<ll_cdl_edge_data_t>* swap_buffers(bool lock) {
+	std::vector<node_pair_t>* swap_buffers(bool lock) {
 
 		if (lock) ll_spinlock_acquire(&_buffer_lock);
-		std::vector<ll_cdl_edge_data_t>* b = _buffer;
-		_buffer = new std::vector<ll_cdl_edge_data_t>();
+		std::vector<node_pair_t>* b = _buffer;
+		_buffer = new std::vector<node_pair_t>();
 		if (lock) ll_spinlock_release(&_buffer_lock);
 
 		//sort_heap(b->begin(), b->end());
@@ -739,200 +677,6 @@ protected:
 		_stats.ss_requests_processed += b->size();
 
 		return b;
-	}
-};
-
-
-/**
- * A serial concatenation of multiple data sources
- */
-class ll_concat_data_source : public ll_data_source {
-
-	std::queue<ll_data_source*> _data_sources;
-	ll_spinlock_t _lock;
-	bool _simple;
-
-
-public:
-
-	/**
-	 * Create an instance of the concatenated data source
-	 */
-	ll_concat_data_source() {
-
-		_lock = 0;
-		_simple = true;
-	}
-
-
-	/**
-	 * Destroy the data source
-	 */
-	virtual ~ll_concat_data_source() {
-
-		while (!_data_sources.empty()) {
-			delete _data_sources.front();
-			_data_sources.pop();
-		}
-	}
-
-
-	/**
-	 * Add a data source
-	 *
-	 * @param data_source the data source
-	 */
-	void add(ll_data_source* data_source) {
-
-		ll_spinlock_acquire(&_lock);
-		_data_sources.push(data_source);
-		_simple = _simple && data_source->simple();
-		ll_spinlock_release(&_lock);
-	}
-
-
-	/**
-	 * Is this a simple data source?
-	 */
-	virtual bool simple() {
-		return _simple;
-	}
-
-
-	/**
-	 * Load the next batch of data
-	 *
-	 * @param graph the writable graph
-	 * @param max_edges the maximum number of edges
-	 * @return true if data was loaded, false if there are no more data
-	 */
-	virtual bool pull(ll_writable_graph* graph, size_t max_edges) {
-
-		ll_spinlock_acquire(&_lock);
-
-		if (_data_sources.empty()) {
-			ll_spinlock_release(&_lock);
-			return false;
-		}
-
-		ll_data_source* d = _data_sources.front();
-		ll_spinlock_release(&_lock);
-
-		while (true) {
-
-			bool r = d->pull(graph, max_edges);
-			if (r) return r;
-
-			ll_spinlock_acquire(&_lock);
-
-			if (d != _data_sources.front()) {
-				LL_E_PRINT("Race condition\n");
-				abort();
-			}
-
-			delete d;
-			_data_sources.pop();
-
-			if (_data_sources.empty()) {
-				ll_spinlock_release(&_lock);
-				return false;
-			}
-
-			d = _data_sources.front();
-			ll_spinlock_release(&_lock);
-		}
-	}
-
-
-	/**
-	 * Load the next batch of data to request queues
-	 *
-	 * @param request_queues the request queues
-	 * @param num_stripes the number of stripes (queues array length)
-	 * @param max_edges the maximum number of edges
-	 * @return true if data was loaded, false if there are no more data
-	 */
-	virtual bool pull(ll_la_request_queue** request_queues, size_t num_stripes,
-			size_t max_edges) {
-
-		ll_spinlock_acquire(&_lock);
-
-		if (_data_sources.empty()) {
-			ll_spinlock_release(&_lock);
-			return false;
-		}
-
-		ll_data_source* d = _data_sources.front();
-		ll_spinlock_release(&_lock);
-
-		while (true) {
-
-			bool r = d->pull(request_queues, num_stripes, max_edges);
-			if (r) return r;
-
-			ll_spinlock_acquire(&_lock);
-
-			if (d != _data_sources.front()) {
-				LL_E_PRINT("Race condition\n");
-				abort();
-			}
-
-			delete d;
-			_data_sources.pop();
-
-			if (_data_sources.empty()) {
-				ll_spinlock_release(&_lock);
-				return false;
-			}
-
-			d = _data_sources.front();
-			ll_spinlock_release(&_lock);
-		}
-	}
-
-
-	/**
-	 * Get the next edge
-	 *
-	 * @param o_tail the output for tail
-	 * @param o_head the output for head
-	 * @return true if the edge was loaded, false if EOF or error
-	 */
-	virtual bool next_edge(node_t* o_tail, node_t* o_head) {
-
-		ll_spinlock_acquire(&_lock);
-
-		if (_data_sources.empty()) {
-			ll_spinlock_release(&_lock);
-			return false;
-		}
-
-		ll_data_source* d = _data_sources.front();
-		ll_spinlock_release(&_lock);
-
-		while (true) {
-
-			bool r = d->next_edge(o_tail, o_head);
-			if (r) return r;
-
-			ll_spinlock_acquire(&_lock);
-
-			if (d != _data_sources.front()) {
-				LL_E_PRINT("Race condition\n");
-				abort();
-			}
-
-			delete d;
-			_data_sources.pop();
-
-			if (_data_sources.empty()) {
-				ll_spinlock_release(&_lock);
-				return false;
-			}
-
-			d = _data_sources.front();
-			ll_spinlock_release(&_lock);
-		}
 	}
 };
 
