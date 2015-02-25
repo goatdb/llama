@@ -1780,6 +1780,12 @@ int main(int argc, char** argv)
 		strcpy(database_directory, "db");
 	}
 
+#ifdef LL_PERSISTENCE
+	if (loader_config.lc_tmp_dirs.empty()) {
+		loader_config.lc_tmp_dirs.push_back(std::string(database_directory));
+	}
+#endif
+
 	if (max_level < 0) max_level = input_files.size() - 1;
 
 
