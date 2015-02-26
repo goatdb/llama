@@ -152,6 +152,8 @@ public:
 	size_t ss_requests_processed;
 	double ss_start;
 
+	size_t ss_last_batch_requests;
+
 
 public:
 
@@ -159,8 +161,12 @@ public:
 	 * Create an instance of ll_stream_stats
 	 */
 	ll_stream_stats() {
+		
 		ss_requests_arrived = 0;
 		ss_requests_processed = 0;
+		
+		ss_last_batch_requests = 0;
+
 		ss_start = ll_get_time_ms();
 	}
 
@@ -203,6 +209,7 @@ class ll_stream_writable_loader {
 	ll_stream_stats _stats;
 
 	std::atomic<size_t> _requests_in_current_batch;
+	size_t _last_requests_processed;
 
 
 public:
@@ -235,6 +242,7 @@ public:
 		_terminate = false;
 		_lock = 0;
 		_requests_in_current_batch = 0;
+		_last_requests_processed = 0;
 
 		_num_stripes = omp_get_max_threads();
 		_request_queues = (ll_la_request_queue**) malloc(
@@ -437,6 +445,9 @@ public:
 	int advance() {
 
 		ll_spinlock_acquire(&_lock);
+		_stats.ss_last_batch_requests = _stats.ss_requests_processed
+			- _last_requests_processed;
+		_last_requests_processed = _stats.ss_requests_processed;
 
 		_graph->checkpoint(&_loader_config);
 
@@ -474,11 +485,14 @@ class ll_stream_buffer_loader {
 	ll_stream_config _config;
 
 	volatile bool _terminate;
-	ll_stream_stats _stats;
+	volatile bool _run_task;
 
 	std::atomic<size_t> _requests_in_current_batch;
 
-	volatile bool _run_task;
+
+protected:
+
+	ll_stream_stats _stats;
 
 
 public:
@@ -637,8 +651,8 @@ public:
 				}
 			}
 			else {
+				usleep((size_t) (1000.0 * -ms_behind));
 				dt_behind = 0;
-				usleep((size_t) ((1000.0 * -behind) / rdtsc_per_ms));
 			}
 		}
 	}
@@ -654,15 +668,6 @@ public:
 	}
 
 
-	/**
-	 * Schedule the task
-	 */
-	void schedule_task() {
-		_run_task = true;
-		__sync_synchronize();
-	}
-
-
 protected:
 
 	/**
@@ -671,6 +676,15 @@ protected:
 	 * @param buffer the buffer
 	 */
 	virtual void task(std::vector<node_pair_t>& buffer) {}
+
+
+	/**
+	 * Schedule the task
+	 */
+	void schedule_task() {
+		_run_task = true;
+		__sync_synchronize();
+	}
 
 
 	/**
@@ -741,9 +755,10 @@ public:
 		: ll_stream_buffer_loader(data_source, config),
 		  _database(database), _loader_config(loader_config)
 	{
+		_streaming_window = window;
+
 		_graph = NULL;
 		_buffer_queue_lock = 0;
-		_streaming_window = window;
 		_last_advance_ms = 0;
 	}
 
@@ -855,6 +870,7 @@ protected:
 				IF_LL_PERSISTENCE(NULL,) 80*1000000/*XXX*/);
 
 		std::vector<node_pair_t>* last_buffer = swap_buffers(lock);
+		_stats.ss_last_batch_requests = last_buffer->size();
 
 		ll_spinlock_acquire(&_buffer_queue_lock);
 
@@ -1002,6 +1018,8 @@ protected:
 
 		ll_writable_graph& graph = *_graph;
 		double t_start = ll_get_time_ms();
+
+		_stats.ss_last_batch_requests = buffer.size();
 
 		ll_node_pair_loader* loader = new ll_node_pair_loader(&buffer, false);
 		bool b = loader->load_direct(&graph.ro_graph(), _loader_config);

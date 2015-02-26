@@ -786,6 +786,11 @@ public:
 	bool verbose;
 
 
+protected:
+
+	double last_st;
+
+
 public:
 
 	/**
@@ -801,6 +806,8 @@ public:
 
 		print_progress = true;
 		verbose = false;
+
+		last_st = ll_get_time_ms();
 	}
 
 
@@ -884,6 +891,8 @@ public:
 	 */
 	void print_after_benchmark(const ll_benchmark_stats& stats) {
 
+		double now = ll_get_time_ms(); (void) now;
+
 		if (print_progress && verbose) {
 			double t = stats.runtimes[stats.runtimes.size()-1];
 #ifdef LL_STREAMING
@@ -917,22 +926,26 @@ public:
 				= stats.advance_window_times.empty() ? 0
 				: stats.advance_window_times
 				[stats.advance_window_times.size()-1];
-			double st = ll_get_time_ms() - stats.stream_stats->ss_start;
+			double st = now - stats.stream_stats->ss_start;
+			double int_ms = st - last_st; if (int_ms < 0) int_ms = 1e+30;
 			double batch_time = stats.batch_times[stats.batch_times.size()-1];
 			fprintf(stderr, "%6.2lf s, %6.3lf Mreq, %0.3lf Mreq/s, "
 					"%0.3lf Mreq queued, %0.3f cp, %0.3lf adv, %0.3lf run, "
 					"%0.3lf batch\n",
 					st / 1000.0,
 					stats.stream_stats->ss_requests_processed / 1000000.0,
-					stats.stream_stats->ss_requests_processed / 1000.0 / st,
+					//stats.stream_stats->ss_requests_processed / 1000.0 / st,
+					stats.stream_stats->ss_last_batch_requests / 1000.0 / int_ms,
 					stats.stream_stats->num_outstanding_requests() / 1000000.0,
 					load_cp / 1000.0, load_advance / 1000.0, t / 1000.0,
 					batch_time / 1000.0);
+			last_st = st;
 #	endif
 #else
 			print_time(stderr, "", t);
 #endif
 		}
+
 	}
 
 
