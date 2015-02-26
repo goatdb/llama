@@ -78,7 +78,6 @@
  *
  * BENCHMARK_WRITABLE
  * BENCHMARK_TASK_ID
- * BENCHMARK_CONCURRENT_LOAD
  * BENCHMARK_CONTINUOUS_LOAD
  * DO_CP
  * TEST_CXX_ITER
@@ -91,7 +90,6 @@
 //==========================================================================//
 
 //#define BENCHMARK_WRITABLE
-//#define BENCHMARK_CONCURRENT_LOAD
 //#define BENCHMARK_CONTINUOUS_LOAD
 //#define DO_CP
 #define TEST_CXX_ITER
@@ -120,14 +118,8 @@ typedef ll_mlcsr_ro_graph benchmarkable_graph_t;
 #endif
 
 #ifdef BENCHMARK_CONTINUOUS_LOAD
-#	ifndef BENCHMARK_CONCURRENT_LOAD
-#		define BENCHMARK_CONCURRENT_LOAD
-#	endif
-#endif
-
-#ifdef BENCHMARK_CONCURRENT_LOAD
 #	ifndef LL_STREAMING
-#		error "BENCHMARK_CONCURRENT_LOAD requires LL_STREAMING"
+#		error "BENCHMARK_CONTINUOUS_LOAD requires LL_STREAMING"
 #	endif
 #endif
 
@@ -547,6 +539,16 @@ public:
 
 
 	/**
+	 * Add an advance window time to the log
+	 *
+	 * @param t the time in ms
+	 */
+	void report_advance_window_ms(double t) {
+		advance_window_times.push_back(t);
+	}
+
+
+	/**
 	 * Print the statistics
 	 *
 	 * @param f the output file
@@ -821,7 +823,7 @@ public:
 		if (print_progress && verbose) {
 			fprintf(stderr, "\r%5lu:           \b\b\b\b\b\b\b\b\b\b",
 					current_batch);
-#ifndef BENCHMARK_CONCURRENT_LOAD
+#ifndef BENCHMARK_CONTINUOUS_LOAD
 			if (benchmark_count > 1) {
 #endif
 				double load_time
@@ -829,7 +831,8 @@ public:
 				double load_pull
 					= stats.load_pull_times[stats.load_pull_times.size()-1];
 				double load_cp
-					= stats.load_cp_times[stats.load_cp_times.size()-1];
+					= stats.load_cp_times.empty() ? 0
+					: stats.load_cp_times[stats.load_cp_times.size()-1];
 				double load_advance
 					= stats.advance_window_times.empty() ? 0
 					: stats.advance_window_times
@@ -838,7 +841,7 @@ public:
 				fprintf(stderr, " (%0.3lf pull, %0.3lf cp, %0.3lf advance)\n",
 						load_pull/1000.0, load_cp/1000.0,
 						load_advance/1000.0);
-#ifndef BENCHMARK_CONCURRENT_LOAD
+#ifndef BENCHMARK_CONTINUOUS_LOAD
 			}
 #endif
 		}
@@ -884,14 +887,15 @@ public:
 		if (print_progress && verbose) {
 			double t = stats.runtimes[stats.runtimes.size()-1];
 #ifdef LL_STREAMING
-#	ifndef BENCHMARK_CONCURRENT_LOAD
+#	ifndef BENCHMARK_CONTINUOUS_LOAD
 			if (current_iteration == 0 && benchmark_count == 1) {
 				double load_time
 					= stats.load_times[stats.load_times.size()-1];
 				double load_pull
 					= stats.load_pull_times[stats.load_pull_times.size()-1];
 				double load_cp
-					= stats.load_cp_times[stats.load_cp_times.size()-1];
+					= stats.load_cp_times.empty() ? 0
+					: stats.load_cp_times[stats.load_cp_times.size()-1];
 				double load_advance
 					= stats.advance_window_times.empty() ? 0
 					: stats.advance_window_times
@@ -906,9 +910,9 @@ public:
 				print_time(stderr, "Run: ", t);
 			}
 #	else
-#		ifdef BENCHMARK_CONTINUOUS_LOAD
 			double load_cp
-				= stats.load_cp_times[stats.load_cp_times.size()-1];
+				= stats.load_cp_times.empty() ? 0
+				: stats.load_cp_times[stats.load_cp_times.size()-1];
 			double load_advance
 				= stats.advance_window_times.empty() ? 0
 				: stats.advance_window_times
@@ -924,9 +928,6 @@ public:
 					stats.stream_stats->num_outstanding_requests() / 1000000.0,
 					load_cp / 1000.0, load_advance / 1000.0, t / 1000.0,
 					batch_time / 1000.0);
-#		else
-			print_time(stderr, "Run: ", t);
-#		endif
 #	endif
 #else
 			print_time(stderr, "", t);
@@ -1267,188 +1268,6 @@ double run_benchmark(Graph& graph, ll_benchmark<Graph>* benchmark,
 }
 
 
-/**
- * Customization of the direct continuous loader
- */
-class my_continuous_direct_loader : public ll_stream_buffer_loader {
-
-	ll_database* _database;
-	ll_benchmark_stats& _stats;
-	const ll_loader_config* _loader_config;
-	int _streaming_window;
-
-	volatile int _last_good_level;
-	ll_writable_graph* _graph;
-
-#ifdef LL_S_SINGLE_SNAPSHOT
-	std::deque<std::vector<node_pair_t>*> _buffer_queue;
-	ll_spinlock_t _buffer_queue_lock;
-#endif
-
-
-public:
-
-	/**
-	 * Create the object
-	 *
-	 * @param graph the writable graph
-	 * @param database the database
-	 * @param data_source the data source
-	 * @param config the streaming configuration
-	 * @param stats the stats
-	 * @param loader_config the loader config
-	 * @param streaming_window the streaming window size
-	 */
-	my_continuous_direct_loader(ll_writable_graph* graph,
-			ll_database* database,
-			ll_data_source* data_source,
-			const ll_stream_config* config,
-			ll_benchmark_stats* stats,
-			ll_loader_config* loader_config,
-			int streaming_window) 
-		: ll_stream_buffer_loader(data_source, config),
-		  _database(database), _stats(*stats), _loader_config(loader_config),
-		  _streaming_window(streaming_window), _graph(graph)
-	{
-		_last_good_level = -1;
-
-#ifdef LL_S_SINGLE_SNAPSHOT
-		_buffer_queue_lock = 0;
-#endif
-	}
-
-
-	/**
-	 * Destroy the object
-	 */
-	virtual ~my_continuous_direct_loader() {
-		
-#ifdef LL_S_SINGLE_SNAPSHOT
-		while (!_buffer_queue.empty()) {
-			delete _buffer_queue.front();
-			_buffer_queue.pop_front();
-		}
-#endif
-	}
-
-
-	/**
-	 * Get the last good level
-	 *
-	 * @return the last complete good level, or -1 if none
-	 */
-	inline int last_good_level() {
-		return _last_good_level;
-	}
-
-
-#ifdef LL_S_SINGLE_SNAPSHOT
-
-	/**
-	 * Grab the loaded graph
-	 *
-	 * @return the graph (must be freed by the caller), or NULL if it was not loaded
-	 */
-	ll_writable_graph* grab_graph() {
-		__COMPILER_FENCE;
-
-		ll_writable_graph* g = *((ll_writable_graph* volatile*) &_graph);
-
-		if (__sync_val_compare_and_swap(&_graph, g, NULL)) {
-			return g;
-		}
-		else {
-			return NULL;
-		}
-	}
-
-#endif
-
-
-protected:
-
-	/**
-	 * Run a task - override to do something useful with the buffer
-	 *
-	 * @param buffer the buffer
-	 */
-	virtual void task(std::vector<node_pair_t>& buffer) {
-
-#ifdef LL_S_SINGLE_SNAPSHOT
-
-		if (_graph != NULL) {
-			LL_W_PRINT("Falling behind! The graph was not yet grabbed, skipping task");
-			return;
-		}
-
-		// TODO Or should I create a new database instead?
-		ll_writable_graph* g = new ll_writable_graph(_database, 80*1000000/*XXX*/);
-
-		std::vector<node_pair_t>* last_buffer
-			= swap_buffers(false /* do not lock */);
-
-		ll_spinlock_acquire(&_buffer_queue_lock);
-
-		_buffer_queue.push_back(last_buffer);
-		while (_buffer_queue.size() > (size_t) _streaming_window) {
-			delete _buffer_queue.front();
-			_buffer_queue.pop_front();
-		}
-
-		_stats.before_load_cp();
-
-		ll_node_pair_queue_loader* loader
-			= new ll_node_pair_queue_loader(&_buffer_queue);
-		bool b = loader->load_direct(&g->ro_graph(), _loader_config);
-		if (!b) abort();
-		delete loader;
-
-		_stats.after_load_cp();
-
-		ll_spinlock_release(&_buffer_queue_lock);
-
-		_graph = g;
-		__sync_synchronize();
-
-#else
-
-		ll_writable_graph& graph = *_graph;
-
-		_stats.before_load_cp();
-		ll_node_pair_loader* loader = new ll_node_pair_loader(&buffer, false);
-		bool b = loader->load_direct(&graph.ro_graph(), _loader_config);
-		if (!b) abort();
-		delete loader;
-		_stats.after_load_cp();
-
-		_stats.before_advance_window();
-
-#ifdef LL_STREAMING
-		if (_streaming_window > 0
-				&& graph.num_levels() >= (size_t) _streaming_window) {
-			graph.set_min_level(graph.num_levels() - _streaming_window);
-			if (graph.num_levels() >= (size_t) _streaming_window + 3) {
-				graph.delete_level(graph.num_levels()
-						- _streaming_window - 3);
-			}
-		}
-#endif
-
-		// Drop old versions
-		// TODO Fix the performance outlier for -W 3
-		graph.ro_graph().keep_only_recent_versions(2);
-
-		_stats.after_advance_window();
-
-		_last_good_level = graph.ro_graph().num_levels() - 1;
-		__sync_synchronize();
-
-#endif
-	}
-};
-
-
-
 
 //==========================================================================//
 // The Main Function                                                        //
@@ -1538,8 +1357,8 @@ int main(int argc, char** argv)
 				break;
 
 			case 'E':
-				stream_config.sc_edges_per_second = atoi(optarg);
-				if (stream_config.sc_edges_per_second <= 0) {
+				stream_config.sc_max_edges_per_second = atoi(optarg);
+				if (stream_config.sc_max_edges_per_second <= 0) {
 					fprintf(stderr, "Error: The target rate must be positive\n");
 					return 1;
 				}
@@ -2099,21 +1918,6 @@ int main(int argc, char** argv)
 	}
 
 
-#ifdef BENCHMARK_CONCURRENT_LOAD
-	int concurrent_task_threads
-		= (num_threads > 0 ? num_threads : omp_get_max_threads())
-		- concurrent_load_threads;
-
-	if (concurrent_task_threads <= 0) {
-		fprintf(stderr, "Error: No threads left for execution\n");
-		return 1;
-	}
-
-    omp_set_num_threads(2);		// Probably not necessary
-    omp_set_nested(1);
-#endif
-
-
 #if defined(LL_STREAMING)
 
 	ll_file_loaders loaders;
@@ -2134,6 +1938,19 @@ int main(int argc, char** argv)
 
 #if defined(BENCHMARK_CONTINUOUS_LOAD)
 
+	int concurrent_task_threads
+		= (num_threads > 0 ? num_threads : omp_get_max_threads())
+		- concurrent_load_threads;
+
+	if (concurrent_task_threads <= 0) {
+		fprintf(stderr, "Error: No threads left for execution\n");
+		return 1;
+	}
+
+    omp_set_num_threads(2);		// Probably not necessary
+    omp_set_nested(1);
+
+
 	// Initial load
 
 #ifndef LL_S_DIRECT
@@ -2141,7 +1958,7 @@ int main(int argc, char** argv)
 	if (stream_freeze_int_ms > 0) {
 		initial_load = std::min<size_t>((size_t) streaming_batch,
 				(size_t) (stream_freeze_int_ms
-					* stream_config.sc_edges_per_second / 1000));
+					* stream_config.sc_max_edges_per_second / 1000));
 	}
 
 	if (!load_batch_via_writable_graph(graph, combined_data_source,
@@ -2155,21 +1972,21 @@ int main(int argc, char** argv)
 	double t_behind_ms = 0;
 
 #ifdef LL_S_DIRECT
-	my_continuous_direct_loader continuous_loader(
 #	ifdef LL_S_SINGLE_SNAPSHOT
-			NULL,
+	ll_stream_single_snapshot_loader stream_loader(&database,
+			&combined_data_source, &stream_config, &loader_config,
+			streaming_window);
 #	else
-			&graph,
+	ll_stream_ro_level_loader stream_loader(&graph,
+			&combined_data_source, &stream_config, &loader_config,
+			streaming_window, streaming_window == 3 ? -1 : 2);
 #	endif
-			&database,
-			&combined_data_source, &stream_config,
-			&stats, &loader_config, streaming_window);
 #else
-	ll_stream_writable_loader continuous_loader(&graph, &combined_data_source,
-			&stream_config, &loader_config);
+	ll_stream_writable_loader stream_loader(&graph, &combined_data_source,
+			&stream_config, &loader_config, streaming_window, 1);
 #endif
 
-	stats.stream_stats = &continuous_loader.stats();
+	stats.stream_stats = &stream_loader.stats();
 
 #	pragma omp parallel sections
 	{
@@ -2179,7 +1996,7 @@ int main(int argc, char** argv)
 #		pragma omp section
 		{
 			omp_set_num_threads(concurrent_load_threads);
-			continuous_loader.run();
+			stream_loader.run();
 			done = true;
 		}
 
@@ -2189,77 +2006,81 @@ int main(int argc, char** argv)
 #		pragma omp section
 		{
 			omp_set_num_threads(concurrent_task_threads);
-			int last_good_level = -1; (void) last_good_level;
 
 #ifdef LL_S_DIRECT
 			usleep(1000 * stream_freeze_int_ms);
-			continuous_loader.schedule_task();
+			stream_loader.advance_in_background();
 #endif
 
 			while (!done) {
 				if (counter.current_batch >= counter.max_batches
 						&& counter.max_batches > 0) {
-					continuous_loader.terminate();
+					stream_loader.terminate();
 					break;
 				}
+
 				counter.current_batch++;
-
-#ifndef LL_S_DIRECT
 				stats.before_batch();
 
-				if (stream_drain) {
-					if (continuous_loader.stats().num_outstanding_requests()
-							> 100 * 1000) continuous_loader.drain();
-				}
+#if defined(LL_S_DIRECT) && defined(LL_S_SINGLE_SNAPSHOT)
 
-				stats.before_advance_window();
-				last_good_level = continuous_loader.advance(streaming_window, 1);
-				stats.after_advance_window();
+				ll_writable_graph* w = stream_loader.wait_for_advance();
+				stats.report_advance_window_ms(
+						stream_loader.last_advance_time_ms());
 
-#else /* if defined LL_S_DIRECT */
+				stream_loader.advance_in_background();
 
-				stats.before_batch();
-
-#	ifdef LL_S_SINGLE_SNAPSHOT
-				ll_writable_graph* w = NULL;
-				while (w == NULL) {
-					w = continuous_loader.grab_graph();
-					usleep(5);
-				}
-#	else
-				while (last_good_level
-						== continuous_loader.last_good_level()) {
-					usleep(5);
-				}
-				last_good_level = continuous_loader.last_good_level();
-#	endif
-
-				continuous_loader.schedule_task();
-#endif
-
-#ifdef LL_S_SINGLE_SNAPSHOT
 				ll_mlcsr_ro_graph& G_ro = w->ro_graph();
-#else
-				ll_mlcsr_ro_graph G_ro(&G, last_good_level);
-#endif
-
 				for (counter.current_iteration = 0;
 						counter.current_iteration < counter.benchmark_count;
 						counter.current_iteration++) {
-
-#ifdef LL_COUNTERS
 					ll_clear_counters();
-#endif
-
 					counter.print_before_benchmark();
 					return_d = run_benchmark(G_ro, benchmark, stats);
 				}
 
-#ifdef LL_S_SINGLE_SNAPSHOT
 				delete w;
+
+#elif defined(LL_S_DIRECT) && !defined(LL_S_SINGLE_SNAPSHOT)
+
+				int level = stream_loader.wait_for_advance();
+				stats.report_advance_window_ms(
+						stream_loader.last_advance_time_ms());
+
+				stream_loader.advance_in_background();
+
+				ll_mlcsr_ro_graph G_ro(&G, level);
+				for (counter.current_iteration = 0;
+						counter.current_iteration < counter.benchmark_count;
+						counter.current_iteration++) {
+					ll_clear_counters();
+					counter.print_before_benchmark();
+					return_d = run_benchmark(G_ro, benchmark, stats);
+				}
+
+#else /* ! LL_S_DIRECT */
+
+				if (stream_drain) {
+					if (stream_loader.stats().num_outstanding_requests()
+							> 100 * 1000) stream_loader.drain();
+				}
+
+				stats.before_advance_window();
+				stream_loader.advance();
+				stats.after_advance_window();
+
+				ll_mlcsr_ro_graph& G_ro = w->ro_graph();
+				for (counter.current_iteration = 0;
+						counter.current_iteration < counter.benchmark_count;
+						counter.current_iteration++) {
+					ll_clear_counters();
+					counter.print_before_benchmark();
+					return_d = run_benchmark(G_ro, benchmark, stats);
+				}
+
 #endif
 
-				continuous_loader.reset_batch_counters();
+				stream_loader.reset_batch_counters();
 				stats.after_batch();
 				counter.print_after_benchmark(stats);
 
@@ -2292,85 +2113,6 @@ int main(int argc, char** argv)
 #else /* if !defined(BENCHMARK_CONTINUOUS_LOAD) */
 
 	while (true) {
-
-#	if defined(BENCHMARK_CONCURRENT_LOAD)
-		
-		if (counter.max_batches > 0) {
-			if (counter.current_batch > counter.max_batches) break;
-		}
-
-
-		// Initial load
-
-		if (counter.current_batch == 0) {
-			
-			counter.print_before_batch();
-			if (!load_batch_via_writable_graph(graph, combined_data_source,
-						loader_config, streaming_batch, streaming_window,
-						stats)) break;
-			counter.current_batch++;
-			counter.print_after_batch_load(stats);
-		}
-
-
-		// The concurrent sections
-
-		// TODO Move CP and delete to the task execution section
-
-		volatile bool loaded = false;
-		ll_mlcsr_ro_graph G_ro(&G);
-
-		counter.print_before_batch();
-
-#		pragma omp parallel sections
-		{
-
-			// The load section
-
-#			pragma omp section
-			{
-				omp_set_num_threads(concurrent_load_threads);
-
-				// TODO Check if this does the right thing
-				//      for concurrent_load_threads != 1
-
-				if (counter.current_batch < counter.max_batches
-						|| counter.max_batches <= 0) {
-					loaded = load_batch_via_writable_graph(graph,
-							combined_data_source, loader_config,
-							streaming_batch, streaming_window, stats);
-				}
-			}
-
-
-			// The task execution section
-
-#			pragma omp section
-			{
-				omp_set_num_threads(concurrent_task_threads);
-
-				for (counter.current_iteration = 0;
-						counter.current_iteration < counter.benchmark_count;
-						counter.current_iteration++) {
-
-#ifdef LL_COUNTERS
-					ll_clear_counters();
-#endif
-
-					counter.print_before_benchmark();
-					return_d = run_benchmark(G_ro, benchmark, stats);
-					counter.print_after_benchmark(stats);
-				}
-			}
-		}
-
-		counter.current_batch++;
-		if (!loaded) break;
-
-		counter.print_after_batch_load(stats);
-
-
-#	else	/* !defined(BENCHMARK_CONCURRENT_LOAD) */
 		
 		if (counter.max_batches > 0) {
 			if (counter.current_batch >= counter.max_batches) break;
@@ -2386,44 +2128,36 @@ int main(int argc, char** argv)
 		for (counter.current_iteration = 0;
 				counter.current_iteration < counter.benchmark_count;
 				counter.current_iteration++) {
-
-#ifdef LL_COUNTERS
 			ll_clear_counters();
-#endif
-
 			counter.print_before_benchmark();
 			return_d = run_benchmark(G, benchmark, stats);
 			counter.print_after_benchmark(stats);
 		}
-
-#	endif
 
 	}
 
 #endif /* !defined(BENCHMARK_CONTINUOUS_LOAD) */
 #else /* if !defined(LL_STREAMING) */
 
-#	if defined(BENCHMARK_CONCURRENT_LOAD)
-#		error "Not implemented"
-#	else
-
 	for (counter.current_iteration = 0;
 			counter.current_iteration < counter.benchmark_count;
 			counter.current_iteration++) {
-
-#ifdef LL_COUNTERS
 		ll_clear_counters();
-#endif
-
 		counter.print_before_benchmark();
 		return_d = run_benchmark(G, benchmark, stats);
 		counter.print_after_benchmark(stats);
 	}
 
-#	endif
 #endif
 
 	counter.print_at_end();
+
+	
+	//
+	//
+	// Get the configuration summary
+	//
+	//
 
 #if defined(LL_SLCSR)
 	const char* type = "slcsr";
@@ -2448,10 +2182,6 @@ int main(int argc, char** argv)
 
 #ifdef BENCHMARK_CONTINUOUS_LOAD
 	configuration_summary += "_cont-load";
-#else
-#ifdef BENCHMARK_CONCURRENT_LOAD
-	configuration_summary += "_conc-load";
-#endif
 #endif
 
 #if defined(LL_ONE_VT)
@@ -2491,6 +2221,13 @@ int main(int argc, char** argv)
 	configuration_summary += "_s-";
 	configuration_summary += run->rt_identifier;
 #endif
+
+	
+	//
+	//
+	// Print the benchmark configuration and relevant statistics
+	//
+	//
 
 	printf("\nNode type  : %d-bit\nEdge type  : %d-bit\n",
 			(int) sizeof(node_t) * 8, (int) sizeof(edge_t) * 8);

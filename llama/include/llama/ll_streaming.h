@@ -42,6 +42,7 @@
 #include "llama/ll_mlcsr_graph.h"
 #include "llama/ll_writable_graph.h"
 #include "llama/loaders/ll_load_async_writable.h"
+#include "llama/loaders/ll_load_utils.h"
 
 #include <algorithm>
 #include <queue>
@@ -65,7 +66,7 @@ class ll_stream_config {
 
 public:
 
-	size_t sc_edges_per_second;
+	size_t sc_max_edges_per_second;
 	size_t sc_max_edges_per_batch;
 
 	int sc_batch_size_distribution;
@@ -86,7 +87,7 @@ public:
 
 		sc_rdtsc_per_ms = rdtsc_per_ms;
 
-		sc_edges_per_second = 400 * 1000ul;
+		sc_max_edges_per_second = 0;		// Max speed
 		sc_max_edges_per_batch = 0;
 
 		sc_batch_size_distribution = LL_SC_NORMAL;
@@ -180,6 +181,9 @@ public:
 /**
  * A database loader that pulls continuously into the writable graph. Call
  * advance() to advance the sliding window.
+ *
+ * The run() function keeps processing the pending requests in the queue while
+ * throttling the edge ingest rate, but not if throttling is disabled.
  */
 class ll_stream_writable_loader {
 
@@ -191,6 +195,8 @@ class ll_stream_writable_loader {
 
 	ll_stream_config _config;
 	ll_loader_config _loader_config;
+	int _window;
+	int _keep;
 
 	volatile bool _terminate;
 	ll_spinlock_t _lock;
@@ -208,19 +214,25 @@ public:
 	 * @param data_source the data source
 	 * @param config the streaming configuration
 	 * @param loader_config the loader configuration (used in advance())
+	 * @param window the number of snapshots in the sliding window (-1 = all)
+	 * @param keep the number of read-optimized levels to keep (-1 = all)
 	 */
 	ll_stream_writable_loader(ll_writable_graph* graph,
 			ll_data_source* data_source,
 			const ll_stream_config* config,
-			const ll_loader_config* loader_config)
+			const ll_loader_config* loader_config,
+			int window, int keep=-1)
 		: _config(*config), _loader_config(*loader_config)
 	{
 
 		assert(graph != NULL);
 
-		_terminate = false;
 		_graph = graph;
 		_data_source = data_source;
+		_window = window;
+		_keep = keep;
+
+		_terminate = false;
 		_lock = 0;
 		_requests_in_current_batch = 0;
 
@@ -310,8 +322,8 @@ public:
 				}
 			}
 
-			double expected_ms = 1000
-				* (org_batch_size / (double) _config.sc_edges_per_second);
+			double expected_ms = _config.sc_max_edges_per_second == 0 ? 0 
+				: 1000 * (org_batch_size / (double) _config.sc_max_edges_per_second);
 			uint64_t expected_dt = rdtsc_per_ms * expected_ms;
 
 			if (batch_size > 0) {
@@ -326,22 +338,24 @@ public:
 
 			uint64_t t_stop_at = t_start - dt_behind + expected_dt;
 
-			uint64_t t;
 			size_t processed = 0;
-			while ((t = ll_rdtsc()) < t_stop_at) {
-				if (ll_spinlock_try_acquire(&_lock)) {
-					bool r = false;
-					for (size_t i = 0; i < _num_stripes; i++) {
-						if (_request_queues[i]->process_next(*_graph)) {
-							processed++;
-							r = true;
+			if (_config.sc_max_edges_per_second > 0) {
+				uint64_t t;
+				while ((t = ll_rdtsc()) < t_stop_at) {
+					if (ll_spinlock_try_acquire(&_lock)) {
+						bool r = false;
+						for (size_t i = 0; i < _num_stripes; i++) {
+							if (_request_queues[i]->process_next(*_graph)) {
+								processed++;
+								r = true;
+							}
 						}
+						ll_spinlock_release(&_lock);
+						if (!r) break;
 					}
-					ll_spinlock_release(&_lock);
-					if (!r) break;
-				}
-				else {
-					usleep(5);
+					else {
+						usleep(5);
+					}
 				}
 			}
 
@@ -353,7 +367,8 @@ public:
 			}
 
 			t_last = ll_rdtsc();
-			int64_t behind = (int64_t) t_last - (int64_t) t_stop_at;
+			int64_t behind = _config.sc_max_edges_per_second == 0 ? 0
+				: (int64_t) t_last - (int64_t) t_stop_at;
 			double ms_behind = behind / rdtsc_per_ms;
 
 			if (print_msg && (l > 100 * 1000 || ms_behind > 100)) {
@@ -417,26 +432,24 @@ public:
 	/**
 	 * Advance the sliding window
 	 *
-	 * @param window the number of snapshots in the sliding window (-1 = all)
-	 * @param keep the number of read-optimized levels to keep (-1 = all)
 	 * @return the number of the level that was just created
 	 */
-	int advance(int window=-1, int keep=-1) {
+	int advance() {
 
 		ll_spinlock_acquire(&_lock);
 
 		_graph->checkpoint(&_loader_config);
 
-#ifdef LL_STREAMING
-		if (window > 0 && _graph->num_levels() >= (size_t) window) {
-			_graph->set_min_level(_graph->num_levels() - window);
-			if (_graph->num_levels() >= (size_t) window + 3) {
-				_graph->delete_level(_graph->num_levels() - window - 3);
+		if (_window > 0 && _graph->num_levels() >= (size_t) _window) {
+#ifdef LL_MIN_LEVEL
+			_graph->set_min_level(_graph->num_levels() - _window);
+#endif
+			if (_graph->num_levels() >= (size_t) _window + 3) {
+				_graph->delete_level(_graph->num_levels() - _window - 3);
 			}
 		}
-#endif
 
-		if (keep > 0) _graph->ro_graph().keep_only_recent_versions(keep);
+		if (_keep > 0) _graph->ro_graph().keep_only_recent_versions(_keep);
 
 		int l = ((int) _graph->ro_graph().num_levels()) - 1;
 		ll_spinlock_release(&_lock);
@@ -569,8 +582,8 @@ public:
 				}
 			}
 
-			double expected_ms = 1000
-				* (org_batch_size / (double) _config.sc_edges_per_second);
+			double expected_ms = _config.sc_max_edges_per_second == 0 ? 0 
+				: 1000 * (org_batch_size / (double) _config.sc_max_edges_per_second);
 			uint64_t expected_dt = rdtsc_per_ms * expected_ms;
 
 			size_t n = 0;
@@ -606,7 +619,8 @@ public:
 			}
 
 			t_last = ll_rdtsc();
-			int64_t behind = (int64_t) t_last - (int64_t) t_stop_at;
+			int64_t behind = _config.sc_max_edges_per_second == 0 ? 0
+				: (int64_t) t_last - (int64_t) t_stop_at;
 			double ms_behind = behind / rdtsc_per_ms;
 
 			if (behind >= 0) {
@@ -660,6 +674,16 @@ protected:
 
 
 	/**
+	 * Determine if a task is scheduled
+	 *
+	 * @return true if it is scheduled
+	 */
+	inline bool task_scheduled() {
+		return _run_task;
+	}
+
+
+	/**
 	 * Swap the buffers and return the original buffer
 	 *
 	 * @param lock true to lock
@@ -677,6 +701,330 @@ protected:
 		_stats.ss_requests_processed += b->size();
 
 		return b;
+	}
+};
+
+
+/**
+ * A database loader that pulls continuously into a buffer of node pairs and
+ * creates a single-snashot LLAMA on demand.
+ */
+class ll_stream_single_snapshot_loader : public ll_stream_buffer_loader {
+
+	ll_database* _database;
+	const ll_loader_config* _loader_config;
+	int _streaming_window;
+
+	std::deque<std::vector<node_pair_t>*> _buffer_queue;
+	ll_spinlock_t _buffer_queue_lock;
+
+	ll_writable_graph* _graph;
+	double _last_advance_ms;
+
+
+public:
+
+	/**
+	 * Create the object
+	 *
+	 * @param database the database
+	 * @param data_source the data source
+	 * @param config the streaming configuration
+	 * @param loader_config the loader config
+	 * @param window the sliding window size
+	 */
+	ll_stream_single_snapshot_loader(ll_database* database,
+			ll_data_source* data_source,
+			const ll_stream_config* config,
+			ll_loader_config* loader_config,
+			int window)
+		: ll_stream_buffer_loader(data_source, config),
+		  _database(database), _loader_config(loader_config)
+	{
+		_graph = NULL;
+		_buffer_queue_lock = 0;
+		_streaming_window = window;
+		_last_advance_ms = 0;
+	}
+
+
+	/**
+	 * Destroy the object
+	 */
+	virtual ~ll_stream_single_snapshot_loader() {
+		
+		while (!_buffer_queue.empty()) {
+			delete _buffer_queue.front();
+			_buffer_queue.pop_front();
+		}
+	}
+
+
+	/**
+	 * Try to grab the loaded graph. Return NULL if it is not yet ready.
+	 *
+	 * @return the graph (must be freed by the caller), or NULL if not ready
+	 */
+	ll_writable_graph* try_grab_graph() {
+		__COMPILER_FENCE;
+
+		ll_writable_graph* g = *((ll_writable_graph* volatile*) &_graph);
+
+		if (__sync_val_compare_and_swap(&_graph, g, NULL)) {
+			return g;
+		}
+		else {
+			return NULL;
+		}
+	}
+
+
+	/**
+	 * Grab the loaded graph. Block until it is ready (or actually, poll and
+	 * sleep in a few microsecond intervals). Note that it is the caller's
+	 * responsibility to make sure that generating the graph is in progress.
+	 *
+	 * @return the graph (must be freed by the caller)
+	 */
+	ll_writable_graph* wait_for_advance() {
+
+		ll_writable_graph* w = try_grab_graph();
+
+		while (w == NULL) {
+			w = try_grab_graph();
+			usleep(5);
+		}
+
+		return w;
+	}
+
+
+	/**
+	 * Get the time it took to advance the sliding window
+	 *
+	 * @return the time in ms
+	 */
+	double last_advance_time_ms() {
+		return _last_advance_ms;
+	}
+
+
+	/**
+	 * Prepare and return the next graph using the current contents of the
+	 * buffer and advance the sliding window. If there is already a prepared
+	 * graph, return it without preparing a new graph.
+	 *
+	 * @return the graph (must be freed by the caller)
+	 */
+	ll_writable_graph* advance() {
+
+		ll_writable_graph* w = try_grab_graph();
+		if (w != NULL) return w;
+
+		prepare_next_graph(true);
+		return try_grab_graph();
+	}
+
+
+	/**
+	 * Schedule the graph to be prepared in the background by the loader
+	 * thread and return immediately
+	 */
+	void advance_in_background() {
+		schedule_task();
+	}
+
+
+protected:
+
+	/**
+	 * Prepare the next graph using the current contents of the buffer and
+	 * advance the sliding window
+	 *
+	 * @param lock true to lock
+	 */
+	void prepare_next_graph(bool lock) {
+
+		if (_graph != NULL) {
+			LL_W_PRINT("Falling behind! The graph was not yet grabbed, skipping task");
+			return;
+		}
+
+		// TODO Or should I create a new database instead?
+		ll_writable_graph* g = new ll_writable_graph(_database,
+				IF_LL_PERSISTENCE(NULL,) 80*1000000/*XXX*/);
+
+		std::vector<node_pair_t>* last_buffer = swap_buffers(lock);
+
+		ll_spinlock_acquire(&_buffer_queue_lock);
+
+		_buffer_queue.push_back(last_buffer);
+		while (_buffer_queue.size() > (size_t) _streaming_window) {
+			delete _buffer_queue.front();
+			_buffer_queue.pop_front();
+		}
+
+		double t_start = ll_get_time_ms();
+
+		ll_node_pair_queue_loader* loader
+			= new ll_node_pair_queue_loader(&_buffer_queue);
+		bool b = loader->load_direct(&g->ro_graph(), _loader_config);
+		if (!b) abort();
+		delete loader;
+
+		_last_advance_ms = ll_get_time_ms() - t_start;
+
+		ll_spinlock_release(&_buffer_queue_lock);
+
+		_graph = g;
+		__sync_synchronize();
+	}
+
+
+	/**
+	 * Run a task - override to do something useful with the buffer
+	 *
+	 * @param buffer the buffer
+	 */
+	virtual void task(std::vector<node_pair_t>& buffer) {
+		prepare_next_graph(false);
+	}
+};
+
+
+/**
+ * A database loader that pulls continuously into a buffer and creates another
+ * read-optimized level on demand.
+ */
+class ll_stream_ro_level_loader : public ll_stream_buffer_loader {
+
+	const ll_loader_config* _loader_config;
+	int _streaming_window;
+	int _keep;
+
+	ll_writable_graph* _graph;
+
+	volatile int _last_good_level;
+	int _last_returned_level;
+	double _last_advance_ms;
+
+
+public:
+
+	/**
+	 * Create the object
+	 *
+	 * @param graph the writable graph
+	 * @param data_source the data source
+	 * @param config the streaming configuration
+	 * @param loader_config the loader config
+	 * @param window the sliding window size
+	 * @param keep the number of complete snapshots to keep (-1 = all)
+	 */
+	ll_stream_ro_level_loader(ll_writable_graph* graph,
+			ll_data_source* data_source,
+			const ll_stream_config* config,
+			ll_loader_config* loader_config,
+			int window, int keep=-1)
+		: ll_stream_buffer_loader(data_source, config),
+		  _loader_config(loader_config), _graph(graph)
+	{
+		_streaming_window = window;
+		_keep = keep;
+		_last_good_level = -1;
+		_last_returned_level = -2;
+		_last_advance_ms = 0;
+	}
+
+
+	/**
+	 * Destroy the object
+	 */
+	virtual ~ll_stream_ro_level_loader() {
+	}
+
+
+	/**
+	 * Get the last good level
+	 *
+	 * @return the last complete good level, or -1 if none
+	 */
+	inline int last_good_level() {
+		return _last_good_level;
+	}
+
+
+	/**
+	 * Grab the loaded graph. Block until it is ready (or actually, poll and
+	 * sleep in a few microsecond intervals). Note that it is the caller's
+	 * responsibility to make sure that generating the graph is in progress.
+	 *
+	 * @return the loaded level
+	 */
+	int wait_for_advance() {
+
+		while (_last_returned_level == _last_good_level) {
+			usleep(5);
+		}
+
+		_last_returned_level = _last_good_level;
+		return _last_returned_level;
+	}
+
+
+	/**
+	 * Get the time it took to advance the sliding window
+	 *
+	 * @return the time in ms
+	 */
+	double last_advance_time_ms() {
+		return _last_advance_ms;
+	}
+
+
+	/**
+	 * Schedule the graph to be prepared in the background by the loader
+	 * thread and return immediately
+	 */
+	void advance_in_background() {
+		schedule_task();
+	}
+
+
+protected:
+
+	/**
+	 * Run a task - override to do something useful with the buffer
+	 *
+	 * @param buffer the buffer
+	 */
+	virtual void task(std::vector<node_pair_t>& buffer) {
+
+		ll_writable_graph& graph = *_graph;
+		double t_start = ll_get_time_ms();
+
+		ll_node_pair_loader* loader = new ll_node_pair_loader(&buffer, false);
+		bool b = loader->load_direct(&graph.ro_graph(), _loader_config);
+		if (!b) abort();
+		delete loader;
+
+		if (_streaming_window > 0
+				&& graph.num_levels() >= (size_t) _streaming_window) {
+#ifdef LL_MIN_LEVEL
+			graph.set_min_level(graph.num_levels() - _streaming_window);
+#endif
+			if (graph.num_levels() >= (size_t) _streaming_window + 3) {
+				graph.delete_level(graph.num_levels()
+						- _streaming_window - 3);
+			}
+		}
+
+		if (_keep > 0) graph.ro_graph().keep_only_recent_versions(_keep);
+
+		_last_good_level = graph.ro_graph().num_levels() - 1;
+		__sync_synchronize();
+
+		_last_advance_ms = ll_get_time_ms() - t_start;
 	}
 };
 
