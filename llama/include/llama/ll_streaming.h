@@ -301,7 +301,7 @@ public:
 
 		_stats.ss_start = ll_get_time_ms();
 
-		uint64_t dt_behind = 0;
+		int64_t dt_behind = 0;
 
 		double time_last_msg = 0;
 		bool print_msg = false;
@@ -314,7 +314,7 @@ public:
 
 		while (!_terminate) {
 
-			uint64_t t_start = t_last;
+			uint64_t t_start = ll_rdtsc();
 			size_t batch_size = _config.next_batch_size();
 			size_t org_batch_size = batch_size;
 
@@ -388,8 +388,8 @@ public:
 				}
 			}
 
+			dt_behind = behind;
 			if (behind >= 0) {
-				dt_behind = behind;
 				if (!print_msg && ms_behind > 100) {
 					double ct = ll_get_time_ms();
 					if (ct - time_last_msg > 1000) {
@@ -400,9 +400,10 @@ public:
 				}
 			}
 			else {
-				dt_behind = 0;
 				usleep((size_t) ((1000.0 * -behind) / rdtsc_per_ms));
 			}
+
+			dt_behind += ll_rdtsc() - t_last;
 		}
 	}
 
@@ -565,7 +566,7 @@ public:
 
 		_stats.ss_start = ll_get_time_ms();
 
-		uint64_t dt_behind = 0;
+		int64_t dt_behind = 0;
 
 		double time_last_msg = 0;
 		bool print_msg = false;
@@ -580,7 +581,7 @@ public:
 
 		while (!_terminate) {
 
-			uint64_t t_start = t_last;
+			uint64_t t_start = ll_rdtsc();
 			size_t batch_size = _config.next_batch_size();
 			size_t org_batch_size = batch_size;
 
@@ -619,7 +620,11 @@ public:
 
 			uint64_t t_stop_at = t_start - dt_behind + expected_dt;
 
-			if (_run_task && dt_behind <= 0) {
+			if (_run_task) {
+
+				// Note that if we check dt_behind <= 0, we will never run!
+				// And if we check t_stop_at < ll_rdtsc(), we get huge stalls!
+
 				_run_task = false;
 				t_run_task = ll_rdtsc();
 				ll_spinlock_acquire(&_buffer_lock);
@@ -636,12 +641,18 @@ public:
 			int64_t behind = _config.sc_max_edges_per_second == 0 ? 0
 				: (int64_t) t_last - (int64_t) t_stop_at;
 			double ms_behind = behind / rdtsc_per_ms;
+			dt_behind = behind;
 
 			if (behind >= 0) {
-				dt_behind = behind;
+				
+				/*if (rand() % 50 == 0)
+					fprintf(stderr, "-- Falling behind: %7.3lf ms\t"
+							"[%0.3lf Mreq]\n",
+							ms_behind, _buffer->size() / 1000000.0);*/
+
 				// TODO What is the right condition for this warning?
 				if (!print_msg && ms_behind > 10000
-						&& dt_last_task < 2 * dt_behind) {
+						&& (int64_t) dt_last_task < 2 * dt_behind) {
 					double ct = ll_get_time_ms();
 					if (ct - time_last_msg > 1000) {
 						time_last_msg = ct;
@@ -652,8 +663,19 @@ public:
 			}
 			else {
 				usleep((size_t) (1000.0 * -ms_behind));
-				dt_behind = 0;
+				//dt_behind = 0;
+				
+				/*if (rand() % 50 == 0)
+					fprintf(stderr, "%8ld --> %7ld tsc,\t%0.3lf --> %0.3lf ms,"
+							"\t%6.3lf %%\t[%0.3lf Mreq]\n",
+						behind, behind + (ll_rdtsc() - t_last),
+						behind / rdtsc_per_ms,
+						(behind + (ll_rdtsc() - t_last)) / rdtsc_per_ms,
+						100.0 * (behind + (ll_rdtsc() - t_last)) / -behind,
+						_buffer->size() / 1000000.0);*/
 			}
+
+			dt_behind += ll_rdtsc() - t_last;
 		}
 	}
 

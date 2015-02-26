@@ -894,7 +894,8 @@ public:
 		double now = ll_get_time_ms(); (void) now;
 
 		if (print_progress && verbose) {
-			double t = stats.runtimes[stats.runtimes.size()-1];
+			double t = stats.runtimes.empty() ? 0
+				: stats.runtimes[stats.runtimes.size()-1];
 #ifdef LL_STREAMING
 #	ifndef BENCHMARK_CONTINUOUS_LOAD
 			if (current_iteration == 0 && benchmark_count == 1) {
@@ -928,7 +929,8 @@ public:
 				[stats.advance_window_times.size()-1];
 			double st = now - stats.stream_stats->ss_start;
 			double int_ms = st - last_st; if (int_ms < 0) int_ms = 1e+30;
-			double batch_time = stats.batch_times[stats.batch_times.size()-1];
+			double batch_time = stats.batch_times.empty() ? 0
+				: stats.batch_times[stats.batch_times.size()-1];
 			fprintf(stderr, "%6.2lf s, %6.3lf Mreq, %0.3lf Mreq/s, "
 					"%0.3lf Mreq queued, %0.3f cp, %0.3lf adv, %0.3lf run, "
 					"%0.3lf batch\n",
@@ -2062,13 +2064,19 @@ int main(int argc, char** argv)
 
 				stream_loader.advance_in_background();
 
-				ll_mlcsr_ro_graph G_ro(&G, level);
-				for (counter.current_iteration = 0;
-						counter.current_iteration < counter.benchmark_count;
-						counter.current_iteration++) {
-					ll_clear_counters();
+				if (level >= 0) {
+					ll_mlcsr_ro_graph G_ro(&G, level);
+					for (counter.current_iteration = 0;
+							counter.current_iteration < counter.benchmark_count;
+							counter.current_iteration++) {
+						ll_clear_counters();
+						counter.print_before_benchmark();
+						return_d = run_benchmark(G_ro, benchmark, stats);
+					}
+				}
+				else {
+					counter.current_iteration = counter.benchmark_count - 1;
 					counter.print_before_benchmark();
-					return_d = run_benchmark(G_ro, benchmark, stats);
 				}
 
 #else /* ! LL_S_DIRECT */
@@ -2082,7 +2090,7 @@ int main(int argc, char** argv)
 				stream_loader.advance();
 				stats.after_advance_window();
 
-				ll_mlcsr_ro_graph& G_ro = w->ro_graph();
+				ll_mlcsr_ro_graph& G_ro = G.ro_graph();
 				for (counter.current_iteration = 0;
 						counter.current_iteration < counter.benchmark_count;
 						counter.current_iteration++) {
