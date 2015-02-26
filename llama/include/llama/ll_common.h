@@ -48,8 +48,8 @@
  *
  * Additional configuration:
  *   LL_DELETIONS
+ *   LL_NODE32
  */
-
 
 
 //==========================================================================//
@@ -106,7 +106,20 @@
 // Graph types and constants                                                //
 //==========================================================================//
 
+#if defined(LL_NODE32) && defined(LL_NODE64)
+#	error "Both LL_NODE32 and LL_NODE64 are defined at the same time"
+#elif !defined(LL_NODE32) && !defined(LL_NODE64)
+#	define LL_NODE64
+#endif
+
+#ifdef LL_NODE32
+#define LL_NODE_PRINTF_FORMAT		"%d"
+typedef int32_t node_t;
+#else
+#define LL_NODE_PRINTF_FORMAT		"%lld"
 typedef int64_t node_t;
+#endif
+
 typedef int64_t edge_t;
 typedef uint32_t degree_t;
 

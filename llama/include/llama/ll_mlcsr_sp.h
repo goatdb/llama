@@ -1320,7 +1320,7 @@ public:
 	 * @param edge the edge ID
 	 * @param translation the edge ID translation
 	 */
-	inline ll_mlcsr_edge_property<node_t>& edge_translation() {
+	inline ll_mlcsr_edge_property<edge_t>& edge_translation() {
 		return _edge_translation;
 	}
 

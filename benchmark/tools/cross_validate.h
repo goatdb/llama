@@ -58,8 +58,8 @@ node_t cross_validate_exp_out(EXP_GRAPH& G_org, EXP_GRAPH2& G_exp) {
 
 	if (G_org.max_nodes() != G_exp.max_nodes()) {
 		fprintf(stderr, "Different number of nodes:\n");
-		fprintf(stderr, "  Exp: %lu\n", G_exp.max_nodes());
-		fprintf(stderr, "  Org: %lu\n", G_org.max_nodes());
+		fprintf(stderr, "  Exp: %lu\n", (size_t) G_exp.max_nodes());
+		fprintf(stderr, "  Org: %lu\n", (size_t) G_org.max_nodes());
 		abort();
 	}
 
@@ -99,7 +99,7 @@ node_t cross_validate_exp_out(EXP_GRAPH& G_org, EXP_GRAPH2& G_exp) {
 		for (size_t i = 0; i < v_org.size(); i++) {
 			if (v_org[i] != v_exp[i]) {
 				for (size_t j = 0; j < v_org.size(); j++) {
-					printf("%8ld %8ld", v_org[j], v_exp[j]);
+					printf("%8ld %8ld", (long) v_org[j], (long) v_exp[j]);
 					if (v_org[j] != v_exp[j]) printf(" *");
 					printf("\n");
 				}
@@ -366,8 +366,8 @@ int cross_validate_with_file(Graph& graph, const char* cross_validate_with,
 
 	if (cv_graph.max_nodes() != graph.max_nodes()) {
 		fprintf(stderr, "Cross-Validation failed: Different number of nodes:\n");
-		fprintf(stderr, "  Exp: %lu\n", cv_graph.max_nodes());
-		fprintf(stderr, "  Org: %lu\n", graph.max_nodes());
+		fprintf(stderr, "  Exp: %lu\n", (size_t) cv_graph.max_nodes());
+		fprintf(stderr, "  Org: %lu\n", (size_t) graph.max_nodes());
 		return 1;
 	}
 
