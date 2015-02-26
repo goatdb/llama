@@ -2214,7 +2214,8 @@ int main(int argc, char** argv)
 			(int) sizeof(node_t) * 8, (int) sizeof(edge_t) * 8);
 	printf("Deletions  : %s\n", IFE_LL_DELETIONS("yes", "no"));
 #ifdef BENCHMARK_CONTINUOUS_LOAD
-	printf("Strm. Drain: %s\n", IFE_LL_DELETIONS("yes", "no"));
+	printf("Strm. Drain: %s\n",
+			window_config.swc_drain_threshold > 0 ? "yes" : "no");
 #endif
 	printf("Levels     : %d--%d%s\n", min_level, max_level,
 #ifdef BENCHMARK_WRITABLE
