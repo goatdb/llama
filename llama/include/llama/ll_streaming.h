@@ -1068,4 +1068,408 @@ protected:
 	}
 };
 
+
+/**
+ * The sliding window configuration
+ */
+class ll_sliding_window_config {
+
+public:
+
+	int swc_window_snapshots;
+	double swc_advance_interval_ms;
+	size_t swc_max_advances;
+	size_t swc_drain_threshold;
+
+
+public:
+
+	/**
+	 * Create an instance of class ll_sliding_window_config
+	 */
+	ll_sliding_window_config() {
+
+		swc_window_snapshots = 1;
+		swc_advance_interval_ms = 1000;
+		swc_max_advances = 0;
+		swc_drain_threshold = 100 * 1000;
+	}
+};
+
+
+/**
+ * The streaming sliding-window driver (SLOTH)
+ */
+class ll_sliding_window_driver {
+
+	ll_database* _database;
+	ll_data_source* _data_source;
+
+	ll_stream_config _stream_config;
+	ll_sliding_window_config _window_config;
+	ll_loader_config _loader_config;
+	int _num_threads;
+
+#if defined(LL_S_DIRECT) && defined(LL_S_SINGLE_SNAPSHOT)
+	typedef ll_stream_single_snapshot_loader stream_loader;
+#elif defined(LL_S_DIRECT) && !defined(LL_S_SINGLE_SNAPSHOT)
+	typedef ll_stream_ro_level_loader stream_loader;
+#else /* ! LL_S_DIRECT */
+	typedef ll_stream_writable_loader stream_loader;
+#endif
+
+	stream_loader* _loader;
+
+	size_t _batch;
+	double _last_advance_ms;
+	double _last_batch_ms;
+	double _last_compute_ms;
+	double _last_behind_ms;
+
+
+public:
+
+	/**
+	 * Create an instance of class ll_sliding_window_driver
+	 *
+	 * @param database the database
+	 * @param data_source the data source
+	 * @param stream_config the streaming configuration
+	 * @param window_config the sliding window configuration
+	 * @param loader_config the loader configuration
+	 * @param window the sliding window size
+	 * @param num_threads the number of threads (-1 = all, must be >= 2)
+	 */
+	ll_sliding_window_driver(ll_database* database,
+			ll_data_source* data_source,
+			const ll_stream_config* stream_config,
+			const ll_sliding_window_config* window_config,
+			const ll_loader_config* loader_config,
+			int num_threads=-1) {
+
+		_database = database;
+		_data_source = data_source;
+
+		_stream_config = *stream_config;
+		_window_config = *window_config;
+		_loader_config = *loader_config;
+
+		_num_threads = num_threads <= 0 ? omp_get_max_threads() : num_threads;
+		assert(_num_threads >= 2);
+
+#if defined(LL_S_DIRECT) && defined(LL_S_SINGLE_SNAPSHOT)
+		_loader = new ll_stream_single_snapshot_loader(_database,
+				_data_source, &_stream_config, &_loader_config,
+				_window_config.swc_window_snapshots);
+#elif defined(LL_S_DIRECT) && !defined(LL_S_SINGLE_SNAPSHOT)
+		_loader = new ll_stream_ro_level_loader(_database->graph(),
+				_data_source, &_stream_config, &_loader_config,
+				_window_config.swc_window_snapshots,
+				_window_config.swc_window_snapshots == 3 ? -1 : 2);
+#else /* ! LL_S_DIRECT */
+		_loader = new ll_stream_writable_loader(_database->graph(),
+				_data_source, &_stream_config, &_loader_config,
+				_window_config.swc_window_snapshots);
+#endif
+
+		_batch = 0;
+		_last_advance_ms = 0;
+		_last_batch_ms = 0;
+		_last_compute_ms = 0;
+		_last_behind_ms = 0;
+	}
+
+
+	/**
+	 * Destroy the class
+	 */
+	virtual ~ll_sliding_window_driver() {
+
+		delete _loader;
+	}
+
+
+	/**
+	 * Get the streaming stats
+	 *
+	 * @return the stats
+	 */
+	inline const ll_stream_stats& stream_stats() {
+		return _loader->stats();
+	}
+
+
+	/**
+	 * Get the stream loader configuration
+	 *
+	 * @return the configuration
+	 */
+	inline const ll_stream_config& stream_config() {
+		return _stream_config;
+	}
+
+
+	/**
+	 * Get the sliding window configuration
+	 *
+	 * @return the configuration
+	 */
+	inline const ll_sliding_window_config& window_config() {
+		return _window_config;
+	}
+
+
+	/**
+	 * Get the graph loader configuration
+	 *
+	 * @return the configuration
+	 */
+	inline const ll_loader_config& loader_config() {
+		return _loader_config;
+	}
+
+
+	/**
+	 * Get the batch number
+	 *
+	 * @return the batch number
+	 */
+	inline size_t batch() {
+		return _batch;
+	}
+
+
+	/**
+	 * Get the time it took to advance the sliding window
+	 *
+	 * @return the time in ms
+	 */
+	double last_advance_time_ms() {
+		return _last_advance_ms;
+	}
+
+
+	/**
+	 * Get the time it took to perfrom the batch in the execution thread
+	 *
+	 * @return the batch time in ms
+	 */
+	double last_batch_time_ms() {
+		return _last_batch_ms;
+	}
+
+
+	/**
+	 * Get the time it took to perform the computation
+	 *
+	 * @return the time in ms
+	 */
+	double last_compute_time_ms() {
+		return _last_compute_ms;
+	}
+
+
+	/**
+	 * Run the driver
+	 */
+	void run() {
+
+		// Initialize OpenMP for the driver
+
+		int prev_max_threads = omp_get_max_threads();
+		int prev_nested = omp_get_nested();
+
+		int concurrent_load_threads = 1;
+		int concurrent_task_threads = _num_threads - concurrent_load_threads;
+		if (concurrent_task_threads <= 0) {
+			LL_E_PRINT("Error: No threads left for execution\n");
+			abort();
+		}
+
+		omp_set_num_threads(2);		// Probably not necessary
+		omp_set_nested(1);
+
+
+		// Initialize streaming
+
+		_batch = 0;
+		_last_behind_ms = 0;
+
+		volatile bool done = false;
+
+
+		// Threads
+
+#		pragma omp parallel sections
+		{
+
+			// The load section
+
+#			pragma omp section
+			{
+				omp_set_num_threads(concurrent_load_threads);
+
+				_loader->run();
+
+				done = true;
+				__sync_synchronize();
+			}
+
+
+			// The task execution section
+
+#			pragma omp section
+			{
+				omp_set_num_threads(concurrent_task_threads);
+
+				usleep(1000 * _window_config.swc_advance_interval_ms);
+
+#ifdef LL_S_DIRECT
+				_loader->advance_in_background();
+
+				// TODO This is too much of a hack:
+				_loader->wait_for_advance();
+				usleep(1000 * _window_config.swc_advance_interval_ms);
+				_loader->advance_in_background();
+#endif
+
+				while (!done) {
+					if (_window_config.swc_max_advances > 0) {
+						if (_batch >= _window_config.swc_max_advances) {
+							_loader->terminate();
+							break;
+						}
+					}
+
+					_batch++;
+					double t_batch_start = ll_get_time_ms();
+
+					before_batch();
+
+#if defined(LL_S_DIRECT) && defined(LL_S_SINGLE_SNAPSHOT)
+
+					ll_writable_graph* w = _loader->wait_for_advance();
+					_last_advance_ms = _loader->last_advance_time_ms();
+					_loader->advance_in_background();
+
+					double t_compute_start = ll_get_time_ms();
+					compute(w->ro_graph());
+					_last_compute_ms = ll_get_time_ms() - t_compute_start;
+
+					delete w;
+
+#elif defined(LL_S_DIRECT) && !defined(LL_S_SINGLE_SNAPSHOT)
+
+					int level = _loader->wait_for_advance();
+					_last_advance_ms = _loader->last_advance_time_ms();
+					_loader->advance_in_background();
+
+					if (level < 0) {
+						skipped();
+					}
+					else {
+						ll_mlcsr_ro_graph G_ro(&_database->graph()->ro_graph(),
+								level);
+						double t_compute_start = ll_get_time_ms();
+						compute(G_ro);
+						_last_compute_ms = ll_get_time_ms() - t_compute_start;
+					}
+
+#else /* ! LL_S_DIRECT */
+
+					if (_window_config.swc_drain_threshold > 0) {
+						if (_loader->stats().num_outstanding_requests()
+								> _window_config.swc_drain_threshold) {
+							_loader->drain();
+						}
+					}
+
+					double t_advance_start = ll_get_time_ms();
+					_loader->advance();
+					_last_advance_ms = ll_get_time_ms() - t_advance_start;
+
+					double t_compute_start = ll_get_time_ms();
+					compute(_database->graph()->ro_graph());
+					_last_compute_ms = ll_get_time_ms() - t_compute_start;
+#endif
+
+					_loader->reset_batch_counters();
+					_last_batch_ms = ll_get_time_ms() - t_batch_start;
+
+					after_batch();
+
+
+					// Take care of the sliding window timing
+
+					if (_window_config.swc_advance_interval_ms > 0) {
+
+						double t = _window_config.swc_advance_interval_ms
+							- _last_batch_ms - _last_behind_ms;
+
+						if (t > 0) {
+							usleep((long) (t * 1000.0));
+							_last_behind_ms = 0;
+						}
+						else {
+							_last_behind_ms = -t;
+							behind(-t);
+						}
+					}
+				}
+			}
+		}
+
+
+		// Finish
+		
+		finished();
+
+		omp_set_nested(prev_nested);
+		omp_set_num_threads(prev_max_threads);
+	}
+
+
+protected:
+
+	/**
+	 * Callback for before starting a batch in an execution thread
+	 */
+	virtual void before_batch() {}
+
+
+	/**
+	 * Callback for after completing a batch in an execution thread
+	 */
+	virtual void after_batch() {}
+
+
+	/**
+	 * Callback for skipping a round of computation (e.g. if the graph is not
+	 * ready)
+	 */
+	virtual void skipped() {}
+
+
+	/**
+	 * Callback for being behind
+	 *
+	 * @param ms the number of ms we are behind the schedule
+	 */
+	virtual void behind(double ms) {}
+
+
+	/**
+	 * Callback for finishing the entire run
+	 */
+	virtual void finished() {}
+
+
+	/**
+	 * Run the computation
+	 *
+	 * @param G the graph
+	 */
+	virtual void compute(ll_mlcsr_ro_graph& G) {}
+};
+
 #endif

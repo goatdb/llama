@@ -807,7 +807,7 @@ public:
 		print_progress = true;
 		verbose = false;
 
-		last_st = ll_get_time_ms();
+		last_st = 0;
 	}
 
 
@@ -920,9 +920,6 @@ public:
 				print_time(stderr, "Run: ", t);
 			}
 #	else
-			double load_cp
-				= stats.load_cp_times.empty() ? 0
-				: stats.load_cp_times[stats.load_cp_times.size()-1];
 			double load_advance
 				= stats.advance_window_times.empty() ? 0
 				: stats.advance_window_times
@@ -932,15 +929,13 @@ public:
 			double batch_time = stats.batch_times.empty() ? 0
 				: stats.batch_times[stats.batch_times.size()-1];
 			fprintf(stderr, "%6.2lf s, %6.3lf Mreq, %0.3lf Mreq/s, "
-					"%0.3lf Mreq queued, %0.3f cp, %0.3lf adv, %0.3lf run, "
+					"%0.3lf Mreq queued, %0.3lf adv, %0.3lf run, "
 					"%0.3lf batch\n",
 					st / 1000.0,
 					stats.stream_stats->ss_requests_processed / 1000000.0,
-					//stats.stream_stats->ss_requests_processed / 1000.0 / st,
 					stats.stream_stats->ss_last_batch_requests / 1000.0 / int_ms,
 					stats.stream_stats->num_outstanding_requests() / 1000000.0,
-					load_cp / 1000.0, load_advance / 1000.0, t / 1000.0,
-					batch_time / 1000.0);
+					load_advance / 1000.0, t / 1000.0, batch_time / 1000.0);
 			last_st = st;
 #	endif
 #else
@@ -1206,7 +1201,6 @@ static void usage(const char* arg0) {
 
 
 
-
 //==========================================================================//
 // Benchmark Components                                                     //
 //==========================================================================//
@@ -1251,7 +1245,6 @@ bool load_batch_via_writable_graph(ll_writable_graph& graph,
 #endif
 
 	stats.after_load();
-
 	return true;
 }
 
@@ -1281,6 +1274,152 @@ double run_benchmark(Graph& graph, ll_benchmark<Graph>* benchmark,
 
 	return return_d;
 }
+
+
+
+//==========================================================================//
+// SLOTH Customization                                                      //
+//==========================================================================//
+
+/**
+ * The customized sliding window driver
+ */
+class ll_benchmark_sliding_window_driver : public ll_sliding_window_driver {
+
+	ll_benchmark<benchmarkable_graph_t>* _benchmark;
+	ll_benchmark_counter* _counter;
+	ll_benchmark_stats* _stats;
+
+	double _last_return_value;
+
+
+public:
+
+	/**
+	 * Create an instance of class ll_benchmark_sliding_window_driver
+	 *
+	 * @param database the database
+	 * @param data_source the data source
+	 * @param stream_config the streaming configuration
+	 * @param window_config the sliding window configuration
+	 * @param loader_config the loader configuration
+	 * @param window the sliding window size
+	 * @param num_threads the number of threads (-1 = all, must be >= 2)
+	 * @param benchmark the benchmark
+	 * @param counter the benchmark counter
+	 * @param stats the benchmark stats
+	 */
+	ll_benchmark_sliding_window_driver(ll_database* database,
+			ll_data_source* data_source,
+			const ll_stream_config* stream_config,
+			const ll_sliding_window_config* window_config,
+			const ll_loader_config* loader_config,
+			int num_threads,
+			ll_benchmark<benchmarkable_graph_t>* benchmark,
+			ll_benchmark_counter* counter,
+			ll_benchmark_stats* stats)
+
+	: ll_sliding_window_driver(database, data_source, stream_config,
+			window_config, loader_config, num_threads) {
+
+		_benchmark = benchmark;
+		_counter = counter;
+		_stats = stats;
+
+		_last_return_value = 0;
+		_stats->stream_stats = &stream_stats();
+	}
+
+
+	/**
+	 * Destroy the instance
+	 */
+	virtual ~ll_benchmark_sliding_window_driver() {}
+
+
+	/**
+	 * Get the last return value
+	 *
+	 * @return the last return value
+	 */
+	inline double last_return_value() {
+		return _last_return_value;
+	}
+
+
+protected:
+
+	/**
+	 * Callback for before starting a batch in an execution thread
+	 */
+	virtual void before_batch() {
+		_counter->current_batch = batch();
+		_stats->before_batch();
+	}
+
+
+	/**
+	 * Callback for after completing a batch in an execution thread
+	 */
+	virtual void after_batch() {
+		_stats->report_advance_window_ms(last_advance_time_ms());
+		_stats->after_batch();
+		_counter->print_after_benchmark(*_stats);
+	}
+
+
+	/**
+	 * Callback for skipping a round of computation (e.g. if the graph is not
+	 * ready)
+	 */
+	virtual void skipped() {
+		_counter->current_iteration = _counter->benchmark_count - 1;
+		_counter->print_before_benchmark();
+	}
+
+
+	/**
+	 * Callback for being behind
+	 *
+	 * @param ms the number of ms we are behind the schedule
+	 */
+	virtual void behind(double ms) {
+
+		double int_ms = window_config().swc_advance_interval_ms;
+
+		if (ms > 0.05 * int_ms) {
+			double p = (ms / int_ms) * 100.0;
+			LL_W_PRINT("Falling behind: %0.3lf seconds (%0.2lf%%)\n",
+					ms / 1000.0, p);
+			if (p > 10 * 100.0) abort();
+		}
+	}
+
+
+	/**
+	 * Callback for finishing the entire run
+	 */
+	virtual void finished() {}
+
+
+	/**
+	 * Run the computation
+	 *
+	 * @param G the graph
+	 */
+	virtual void compute(ll_mlcsr_ro_graph& G) {
+
+		for (_counter->current_iteration = 0;
+				_counter->current_iteration < _counter->benchmark_count;
+				_counter->current_iteration++) {
+
+			ll_clear_counters();
+			_counter->print_before_benchmark();
+
+			_last_return_value = run_benchmark(G, _benchmark, *_stats);
+		}
+	}
+};
 
 
 
@@ -1322,16 +1461,10 @@ int main(int argc, char** argv)
 
 	bool do_load = false;
 	bool do_in_edges = false;
-	ll_loader_config loader_config;
 
-	int concurrent_load_threads = 1; (void) concurrent_load_threads;
-
-	int streaming_batch = 1000 * 1000; (void) streaming_batch;
-	int streaming_window = 10; (void) streaming_window;
-
-	ll_stream_config stream_config(rdtsc_per_ms); (void) stream_config;
-	bool stream_drain = true; (void) stream_drain;
-	double stream_freeze_int_ms = -1; (void) stream_freeze_int_ms;
+	ll_loader_config loader_config;                 (void) loader_config;
+	ll_stream_config stream_config(rdtsc_per_ms);   (void) stream_config;
+	ll_sliding_window_config window_config;         (void) window_config;
 
 
 	// Pase the command-line arguments
@@ -1345,14 +1478,11 @@ int main(int argc, char** argv)
 		switch (c) {
 
 			case 'B':
-				streaming_batch = atoi(optarg);
-				if (streaming_batch <= 0) {
+				stream_config.sc_max_edges_per_batch = atoi(optarg);
+				if (stream_config.sc_max_edges_per_batch <= 0) {
 					fprintf(stderr, "Error: The batch size must be positive\n");
 					return 1;
 				}
-#ifdef BENCHMARK_CONTINUOUS_LOAD
-				stream_config.sc_max_edges_per_batch = streaming_batch;
-#endif
 				break;
 
 			case 'c':
@@ -1380,7 +1510,7 @@ int main(int argc, char** argv)
 				break;
 
 			case 'F':
-				stream_freeze_int_ms = atof(optarg) * 1000;
+				window_config.swc_advance_interval_ms = atof(optarg) * 1000;
 				break;
 
 			case 'h':
@@ -1425,6 +1555,7 @@ int main(int argc, char** argv)
 
 			case 'M':
 				counter.max_batches = atoi(optarg);
+				window_config.swc_max_advances = counter.max_batches;
 				break;
 
 			case 'o':
@@ -1493,8 +1624,8 @@ int main(int argc, char** argv)
 				break;
 
 			case 'W':
-				streaming_window = atoi(optarg);
-				if (streaming_window <= 0) {
+				window_config.swc_window_snapshots = atoi(optarg);
+				if (window_config.swc_window_snapshots <= 0) {
 					fprintf(stderr, "Error: The window size must be positive\n");
 					return 1;
 				}
@@ -1948,190 +2079,19 @@ int main(int argc, char** argv)
 		combined_data_source.add(d);
 	}
 
-	counter.current_batch = 0;
-
 
 #if defined(BENCHMARK_CONTINUOUS_LOAD)
 
-	int concurrent_task_threads
-		= (num_threads > 0 ? num_threads : omp_get_max_threads())
-		- concurrent_load_threads;
+	ll_benchmark_sliding_window_driver sliding_window_benchmark(
+			&database, &combined_data_source, &stream_config, &window_config,
+			&loader_config, num_threads, benchmark, &counter, &stats);
 
-	if (concurrent_task_threads <= 0) {
-		fprintf(stderr, "Error: No threads left for execution\n");
-		return 1;
-	}
-
-    omp_set_num_threads(2);		// Probably not necessary
-    omp_set_nested(1);
-
-
-	// Initial load
-
-#ifndef LL_S_DIRECT
-	size_t initial_load = streaming_batch;
-	if (stream_freeze_int_ms > 0) {
-		initial_load = std::min<size_t>((size_t) streaming_batch,
-				(size_t) (stream_freeze_int_ms
-					* stream_config.sc_max_edges_per_second / 1000));
-	}
-
-	if (!load_batch_via_writable_graph(graph, combined_data_source,
-				loader_config, initial_load, streaming_window,
-				stats)) abort();
-#endif
-
-	counter.current_batch++;
-
-	volatile bool done = false;
-	double t_behind_ms = 0;
-
-#ifdef LL_S_DIRECT
-#	ifdef LL_S_SINGLE_SNAPSHOT
-	ll_stream_single_snapshot_loader stream_loader(&database,
-			&combined_data_source, &stream_config, &loader_config,
-			streaming_window);
-#	else
-	ll_stream_ro_level_loader stream_loader(&graph,
-			&combined_data_source, &stream_config, &loader_config,
-			streaming_window, streaming_window == 3 ? -1 : 2);
-#	endif
-#else
-	ll_stream_writable_loader stream_loader(&graph, &combined_data_source,
-			&stream_config, &loader_config, streaming_window, 1);
-#endif
-
-	stats.stream_stats = &stream_loader.stats();
-
-#	pragma omp parallel sections
-	{
-
-		// The load section
-
-#		pragma omp section
-		{
-			omp_set_num_threads(concurrent_load_threads);
-			stream_loader.run();
-			done = true;
-		}
-
-
-		// The task execution section
-
-#		pragma omp section
-		{
-			omp_set_num_threads(concurrent_task_threads);
-
-#ifdef LL_S_DIRECT
-			usleep(1000 * stream_freeze_int_ms);
-			stream_loader.advance_in_background();
-#endif
-
-			while (!done) {
-				if (counter.current_batch >= counter.max_batches
-						&& counter.max_batches > 0) {
-					stream_loader.terminate();
-					break;
-				}
-
-				counter.current_batch++;
-				stats.before_batch();
-
-#if defined(LL_S_DIRECT) && defined(LL_S_SINGLE_SNAPSHOT)
-
-				ll_writable_graph* w = stream_loader.wait_for_advance();
-				stats.report_advance_window_ms(
-						stream_loader.last_advance_time_ms());
-
-				stream_loader.advance_in_background();
-
-				ll_mlcsr_ro_graph& G_ro = w->ro_graph();
-				for (counter.current_iteration = 0;
-						counter.current_iteration < counter.benchmark_count;
-						counter.current_iteration++) {
-					ll_clear_counters();
-					counter.print_before_benchmark();
-					return_d = run_benchmark(G_ro, benchmark, stats);
-				}
-
-				delete w;
-
-#elif defined(LL_S_DIRECT) && !defined(LL_S_SINGLE_SNAPSHOT)
-
-				int level = stream_loader.wait_for_advance();
-				stats.report_advance_window_ms(
-						stream_loader.last_advance_time_ms());
-
-				stream_loader.advance_in_background();
-
-				if (level >= 0) {
-					ll_mlcsr_ro_graph G_ro(&G, level);
-					for (counter.current_iteration = 0;
-							counter.current_iteration < counter.benchmark_count;
-							counter.current_iteration++) {
-						ll_clear_counters();
-						counter.print_before_benchmark();
-						return_d = run_benchmark(G_ro, benchmark, stats);
-					}
-				}
-				else {
-					counter.current_iteration = counter.benchmark_count - 1;
-					counter.print_before_benchmark();
-				}
-
-#else /* ! LL_S_DIRECT */
-
-				if (stream_drain) {
-					if (stream_loader.stats().num_outstanding_requests()
-							> 100 * 1000) stream_loader.drain();
-				}
-
-				stats.before_advance_window();
-				stream_loader.advance();
-				stats.after_advance_window();
-
-				ll_mlcsr_ro_graph& G_ro = G.ro_graph();
-				for (counter.current_iteration = 0;
-						counter.current_iteration < counter.benchmark_count;
-						counter.current_iteration++) {
-					ll_clear_counters();
-					counter.print_before_benchmark();
-					return_d = run_benchmark(G_ro, benchmark, stats);
-				}
-
-#endif
-
-				stream_loader.reset_batch_counters();
-				stats.after_batch();
-				counter.print_after_benchmark(stats);
-
-				if (stream_freeze_int_ms > 0) {
-
-					double t_batch_ms = stats.batch_times[stats.batch_times.size() - 1];
-					double t_sleep_ms = stream_freeze_int_ms - t_batch_ms - t_behind_ms;
-					//LL_I_PRINT("batch %0.3lf, sleep %0.3lf, behind %0.3lf\n",
-							//t_batch_ms, t_sleep_ms, t_behind_ms);
-					if (t_sleep_ms > 0) {
-						usleep((long) (t_sleep_ms * 1000.0));
-						t_behind_ms = 0;
-					}
-					else {
-						t_behind_ms = -t_sleep_ms;
-						if (t_behind_ms > 0.05 * stream_freeze_int_ms) {
-							LL_W_PRINT("Falling behind: %0.3lf seconds (%0.2lf%%)\n",
-									t_behind_ms / 1000.0,
-									(t_behind_ms / stream_freeze_int_ms) * 100.0);
-
-							if (t_behind_ms / stream_freeze_int_ms > 10.0) abort();
-						}
-					}
-				}
-			}
-		}
-	}
-
+	sliding_window_benchmark.run();
+	return_d = sliding_window_benchmark.last_return_value();
 
 #else /* if !defined(BENCHMARK_CONTINUOUS_LOAD) */
+
+	counter.current_batch = 0;
 
 	while (true) {
 		
