@@ -52,6 +52,7 @@
  */
 
 
+
 //==========================================================================//
 // Common Includes                                                          //
 //==========================================================================//
@@ -112,6 +113,16 @@
 #	define LL_NODE64
 #endif
 
+#if defined(LL_EDGE32) && defined(LL_EDGE64)
+#	error "Both LL_EDGE32 and LL_EDGE64 are defined at the same time"
+#elif !defined(LL_EDGE32) && !defined(LL_EDGE64)
+#	define LL_EDGE64
+#endif
+
+#ifdef LL_EDGE32
+#	error "LL_EDGE32 is currently not supported"
+#endif
+
 #ifdef LL_NODE32
 #define LL_NODE_PRINTF_FORMAT		"%d"
 typedef int32_t node_t;
@@ -120,7 +131,14 @@ typedef int32_t node_t;
 typedef int64_t node_t;
 #endif
 
+#ifdef LL_EDGE32
+#define LL_EDGE_PRINTF_FORMAT		"%d"
+typedef int32_t edge_t;
+#else
+#define LL_EDGE_PRINTF_FORMAT		"%lld"
 typedef int64_t edge_t;
+#endif
+
 typedef uint32_t degree_t;
 
 typedef struct {

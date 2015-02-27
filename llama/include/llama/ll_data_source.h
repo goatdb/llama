@@ -109,6 +109,136 @@ public:
 };
 
 
+
+/**
+ * A simple pull-based data source
+ */
+class ll_simple_data_source : public ll_data_source {
+
+public:
+
+	/**
+	 * Create an instance of the data source wrapper
+	 */
+	inline ll_simple_data_source() {}
+
+
+	/**
+	 * Destroy the data source
+	 */
+	virtual ~ll_simple_data_source() {}
+
+
+	/**
+	 * Is this a simple data source? A simple data source has only edges with
+	 * predefined node IDs.
+	 *
+	 * A simple data source needs to additionally implement:
+	 *   * next_edge()
+	 */
+	virtual bool simple() { return true; }
+
+
+	/**
+	 * Load the next batch of data
+	 *
+	 * @param graph the writable graph
+	 * @param max_edges the maximum number of edges
+	 * @return true if data was loaded, false if there are no more data
+	 */
+	virtual bool pull(ll_writable_graph* graph, size_t max_edges) {
+
+		size_t num_stripes = omp_get_max_threads();
+		ll_la_request_queue* request_queues[num_stripes];
+
+		for (size_t i = 0; i < num_stripes; i++) {
+			request_queues[i] = new ll_la_request_queue();
+		}
+
+		bool loaded = false;
+		size_t chunk = num_stripes <= 1
+			? std::min<size_t>(10000ul, max_edges)
+			: max_edges;
+
+		while (true) {
+
+			graph->tx_begin();
+			bool has_data = false;
+
+			for (size_t i = 0; i < num_stripes; i++)
+				request_queues[i]->shutdown_when_empty(false);
+
+			#pragma omp parallel
+			{
+				if (omp_get_thread_num() == 0) {
+
+					has_data = this->pull(request_queues, num_stripes, chunk);
+
+					for (size_t i = 0; i < num_stripes; i++)
+						request_queues[i]->shutdown_when_empty();
+					for (size_t i = 0; i < num_stripes; i++)
+						request_queues[i]->run(*graph);
+				}
+				else {
+					int t = omp_get_thread_num();
+					for (size_t i = 0; i < num_stripes; i++, t++)
+						request_queues[t % num_stripes]->worker(*graph);
+				}
+			}
+
+			graph->tx_commit();
+
+			if (has_data)
+				loaded = true;
+			else
+				break;
+		}
+
+		for (size_t i = 0; i < num_stripes; i++) delete request_queues[i];
+
+		return loaded;
+	}
+
+
+	/**
+	 * Load the next batch of data to request queues
+	 *
+	 * @param request_queues the request queues
+	 * @param num_stripes the number of stripes (queues array length)
+	 * @param max_edges the maximum number of edges
+	 * @return true if data was loaded, false if there are no more data
+	 */
+	virtual bool pull(ll_la_request_queue** request_queues, size_t num_stripes,
+			size_t max_edges) {
+
+		node_t tail, head;
+		size_t num_edges = 0;
+
+		while (next_edge(&tail, &head)) {
+			num_edges++;
+
+			LL_D_NODE2_PRINT(tail, head, "%ld --> %ld\n",
+					(long) tail, (long) head);
+
+			ll_la_request_with_edge_properties* request;
+#ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+			request = new ll_la_add_edge_for_streaming_with_weights<node_t>(
+					tail, head);
+#else
+			request = new ll_la_add_edge<node_t>(tail, head);
+#endif
+
+			size_t stripe = (tail>>(LL_ENTRIES_PER_PAGE_BITS+3)) % num_stripes;
+			request_queues[stripe]->enqueue(request);
+
+			if (max_edges > 0 && num_edges >= max_edges) break;
+		}
+
+		return num_edges > 0;
+	}
+};
+
+
 /**
  * A serial concatenation of multiple data sources
  */

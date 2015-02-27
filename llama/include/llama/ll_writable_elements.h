@@ -82,7 +82,7 @@
 #define LL_W_EDGE_CREATE(edge)				(((w_edge*) (long) (edge))->we_public_id)
 
 #ifdef LL_WRITABLE_USE_MEMORY_POOL
-#ifdef LL_NODE32
+#ifdef LL_EDGE32
 #	if (32 - LL_BITS_LEVEL) < (LL_W_MEM_POOL_MAX_BUFFERS_BITS + LL_W_MEM_POOL_MAX_OFFSET_BITS)
 #		error "Not enough bits to encode the w_edge position in the memory pool"
 #	endif
