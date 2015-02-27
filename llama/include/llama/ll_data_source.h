@@ -239,6 +239,7 @@ public:
 };
 
 
+
 /**
  * A serial concatenation of multiple data sources
  */
@@ -431,5 +432,157 @@ public:
 		}
 	}
 };
+
+
+
+/**
+ * A generic pull-based data source
+ */
+template <typename input_t>
+class ll_generic_data_source {
+
+public:
+
+	/**
+	 * Create an instance of class ll_generic_data_source
+	 */
+	inline ll_generic_data_source() {}
+
+
+	/**
+	 * Destroy an instance of the class
+	 */
+	virtual ~ll_generic_data_source() {}
+
+
+	/**
+	 * Get the next input item. The function returns a pointer to an internal
+	 * buffer that does not need (and should not be) freed by the caller.
+	 * 
+	 * Depending on the implementation, this might or might not be thread safe.
+	 *
+	 * @return the pointer to the next item, or NULL if done
+	 */
+	virtual const input_t* next_input() = 0;
+};
+
+
+
+/**
+ * An adapter for a generic data source for LLAMA
+ */
+template <typename input_t>
+class ll_simple_data_source_adapter : public ll_simple_data_source {
+
+	ll_generic_data_source<input_t>* _source;
+	bool _own;
+
+	std::queue<node_pair_t> _edge_buffer;
+	ll_spinlock_t _edge_buffer_lock;
+
+
+public:
+
+	/**
+	 * Create an instance of the data source adapter
+	 *
+	 * @param source the generic data source to wrap
+	 * @param own true to own the data source and destroy it at the end
+	 */
+	ll_simple_data_source_adapter(ll_generic_data_source<input_t>* source,
+			bool own=false) {
+
+		_source = source;
+		_own = own;
+
+		_edge_buffer_lock = 0;
+	}
+
+
+	/**
+	 * Destroy the instance of this class
+	 */
+	virtual ~ll_simple_data_source_adapter() {
+		if (_own && _source != NULL) delete _source;
+	}
+
+
+	/**
+	 * Get the data source
+	 *
+	 * @return the data source
+	 */
+	inline ll_generic_data_source<input_t>* source() {
+		return _source;
+	}
+
+
+	/**
+	 * Get the next edge
+	 *
+	 * @param o_tail the output for tail
+	 * @param o_head the output for head
+	 * @return true if the edge was loaded, false if EOF or error
+	 */
+	virtual bool next_edge(node_t* o_tail, node_t* o_head) {
+
+		ll_spinlock_acquire(&_edge_buffer_lock);
+		
+		while (_edge_buffer.empty()) {
+
+			const input_t* input = this->next_input();
+			if (input == NULL) {
+				ll_spinlock_release(&_edge_buffer_lock);
+				return false;
+			}
+
+			process_input(input);
+		}
+
+		node_pair_t e = _edge_buffer.front();
+		_edge_buffer.pop();
+
+		ll_spinlock_release(&_edge_buffer_lock);
+
+		*o_tail = e.tail;
+		*o_head = e.head;
+		return true;
+	}
+
+
+protected:
+
+	/**
+	 * Add an edge to the buffer.
+	 *
+	 * Beware that this is intended to be only called from inside
+	 * process_input().
+	 *
+	 * @param tail the tail
+	 * @param head the head
+	 */
+	void add_edge(node_t tail, node_t head) {
+
+		// This is only called from process_input(), which is only called from
+		// next_edge() -- and this happens only while the _edge_buffer_lock is
+		// held. Note that we would need to revisit this if we want more than
+		// one loading thread.
+
+		node_pair_t e;
+		e.tail = tail;
+		e.head = head;
+
+		_edge_buffer.push(e);
+	}
+
+
+	/**
+	 * Processs an input item and generate corresponding edges
+	 *
+	 * @param input the input item
+	 */
+	virtual void process_input(const input_t* input) = 0;
+};
+
 
 #endif

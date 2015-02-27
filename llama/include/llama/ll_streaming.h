@@ -1137,7 +1137,6 @@ public:
 	 * @param stream_config the streaming configuration
 	 * @param window_config the sliding window configuration
 	 * @param loader_config the loader configuration
-	 * @param window the sliding window size
 	 * @param num_threads the number of threads (-1 = all, must be >= 2)
 	 */
 	ll_sliding_window_driver(ll_database* database,
@@ -1150,9 +1149,9 @@ public:
 		_database = database;
 		_data_source = data_source;
 
-		_stream_config = *stream_config;
-		_window_config = *window_config;
-		_loader_config = *loader_config;
+		if (stream_config != NULL) _stream_config = *stream_config;
+		if (window_config != NULL) _window_config = *window_config;
+		if (loader_config != NULL) _loader_config = *loader_config;
 
 		_num_threads = num_threads <= 0 ? omp_get_max_threads() : num_threads;
 		assert(_num_threads >= 2);
