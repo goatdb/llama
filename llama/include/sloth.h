@@ -63,8 +63,6 @@ public:
 	virtual ~sloth_ui_callbacks() {}
 
 
-protected:
-
 	/**
 	 * Callback for starting the run
 	 */
@@ -75,6 +73,18 @@ protected:
 	 * Callback for finishing the entire run
 	 */
 	virtual void after_run() {}
+
+
+	/**
+	 * Callback for starting the batch
+	 */
+	virtual void before_batch() {}
+
+
+	/**
+	 * Callback for finishing the batch
+	 */
+	virtual void after_batch() {}
 
 
 	/**
@@ -100,6 +110,30 @@ protected:
 
 
 /**
+ * SLOTH configuration
+ */
+class sloth_config {
+
+public:
+
+	ll_stream_config stream_config;
+	ll_sliding_window_config window_config;
+	ll_loader_config loader_config;
+
+	int num_threads;
+
+
+	/**
+	 * Create an instance of sloth_config
+	 */
+	inline sloth_config() {
+		num_threads = -1;
+	}
+};
+
+
+
+/**
  * A sliding window application
  */
 template <typename input_t>
@@ -107,6 +141,8 @@ class sloth_application {
 	
 	ll_database _database;
 	sloth_ui_callbacks* _ui;
+
+	size_t _last_batch_inputs;
 
 
 public:
@@ -128,6 +164,24 @@ public:
 		: _source(*this, data_source),
 		  _driver(*this, &_database, &_source, stream_config, window_config,
 				loader_config, num_threads) {
+
+		_ui = NULL;
+		_last_batch_inputs = 0;
+	}
+
+
+	/**
+	 * Create an instance of class sloth_application
+	 *
+	 * @param data_source the generic data source
+	 * @param config the configuration
+	 */
+	sloth_application(ll_generic_data_source<input_t>* data_source,
+			const sloth_config* config)
+		: _source(*this, data_source),
+		  _driver(*this, &_database, &_source, &config->stream_config,
+				  &config->window_config, &config->loader_config,
+				  config->num_threads) {
 		_ui = NULL;
 	}
 
@@ -169,6 +223,16 @@ public:
 	}
 
 
+	/**
+	 * Get the number of processed inputs in the last batch
+	 *
+	 * @return the number of inputs
+	 */
+	size_t last_batch_inputs() {
+		return _last_batch_inputs;
+	}
+
+
 protected:
 
 	/**
@@ -181,7 +245,7 @@ protected:
 	 * @param head the head
 	 */
 	inline void add_edge(node_t tail, node_t head) {
-		_source.add_edge(tail, head);
+		_source.add_edge_helper(tail, head);
 	}
 
 
@@ -226,6 +290,17 @@ private:
 		}
 
 
+		/**
+		 * Add an edge to the buffer.
+		 *
+		 * @param tail the tail
+		 * @param head the head
+		 */
+		inline void add_edge_helper(node_t tail, node_t head) {
+			add_edge(tail, head);
+		}
+
+
 	protected:
 
 		/**
@@ -247,6 +322,7 @@ private:
 	class application_driver : public ll_sliding_window_driver {
 
 		sloth_application<input_t>& _owner;
+		size_t _last_num_inputs;
 
 
 	public:
@@ -264,13 +340,15 @@ private:
 		 */
 		application_driver(sloth_application<input_t>& owner,
 				ll_database* database,
-				ll_data_source* data_source,
+				data_source_adapter* data_source,
 				const ll_stream_config* stream_config,
 				const ll_sliding_window_config* window_config,
 				const ll_loader_config* loader_config,
 				int num_threads)
 		: ll_sliding_window_driver(database, data_source, stream_config,
 				window_config, loader_config, num_threads), _owner(owner) {
+
+			_last_num_inputs = 0;
 		}
 
 
@@ -279,13 +357,20 @@ private:
 		/**
 		 * Callback for before starting a batch in an execution thread
 		 */
-		virtual void before_batch() {}
+		virtual void before_batch() {
+			size_t l = _owner._source.num_processed_inputs();
+			_owner._last_batch_inputs = l - _last_num_inputs;
+			_last_num_inputs = l;
+			if (_owner._ui) _owner._ui->before_batch();
+		}
 
 
 		/**
 		 * Callback for after completing a batch in an execution thread
 		 */
-		virtual void after_batch() {}
+		virtual void after_batch() {
+			if (_owner._ui) _owner._ui->after_batch();
+		}
 
 
 		/**

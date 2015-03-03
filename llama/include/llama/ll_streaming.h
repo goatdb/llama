@@ -1121,10 +1121,15 @@ class ll_sliding_window_driver {
 	stream_loader* _loader;
 
 	size_t _batch;
+	bool _last_skipped;
+
 	double _last_advance_ms;
 	double _last_batch_ms;
 	double _last_compute_ms;
 	double _last_behind_ms;
+	double _last_interval_ms;
+
+	double _last_interval_start;
 
 
 public:
@@ -1172,10 +1177,15 @@ public:
 #endif
 
 		_batch = 0;
+		_last_skipped = false;
+
 		_last_advance_ms = 0;
 		_last_batch_ms = 0;
 		_last_compute_ms = 0;
 		_last_behind_ms = 0;
+		_last_interval_ms = 0;
+
+		_last_interval_start = 0;
 	}
 
 
@@ -1269,6 +1279,26 @@ public:
 
 
 	/**
+	 * Get the time of the last interval between starts of two batches
+	 *
+	 * @return the time in ms
+	 */
+	double last_interval_time_ms() {
+		return _last_interval_ms;
+	}
+
+
+	/**
+	 * Get the number of processed requests in the last batch
+	 *
+	 * @return the number of processed requests (in most cases, just edges)
+	 */
+	size_t last_batch_requests() {
+		return _loader->stats().ss_last_batch_requests;
+	}
+
+
+	/**
 	 * Run the driver
 	 */
 	void run() {
@@ -1293,6 +1323,8 @@ public:
 
 		_batch = 0;
 		_last_behind_ms = 0;
+		_last_skipped = false;
+		_last_interval_start = ll_get_time_ms();
 
 		volatile bool done = false;
 
@@ -1341,7 +1373,11 @@ public:
 					}
 
 					_batch++;
+					_last_skipped = false;
+
 					double t_batch_start = ll_get_time_ms();
+					_last_interval_ms = t_batch_start - _last_interval_start;
+					_last_interval_start = t_batch_start;
 
 					before_batch();
 
@@ -1364,6 +1400,7 @@ public:
 					_loader->advance_in_background();
 
 					if (level < 0) {
+						_last_skipped = true;
 						skipped();
 					}
 					else {

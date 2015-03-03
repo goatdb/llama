@@ -480,6 +480,8 @@ class ll_simple_data_source_adapter : public ll_simple_data_source {
 	std::queue<node_pair_t> _edge_buffer;
 	ll_spinlock_t _edge_buffer_lock;
 
+	size_t _num_inputs;
+
 
 public:
 
@@ -496,6 +498,7 @@ public:
 		_own = own;
 
 		_edge_buffer_lock = 0;
+		_num_inputs = 0;
 	}
 
 
@@ -518,6 +521,16 @@ public:
 
 
 	/**
+	 * Get the number of processed inputs
+	 *
+	 * @return the number of inputs
+	 */
+	inline size_t num_processed_inputs() {
+		return _num_inputs;
+	}
+
+
+	/**
 	 * Get the next edge
 	 *
 	 * @param o_tail the output for tail
@@ -530,13 +543,14 @@ public:
 		
 		while (_edge_buffer.empty()) {
 
-			const input_t* input = this->next_input();
+			const input_t* input = _source->next_input();
 			if (input == NULL) {
 				ll_spinlock_release(&_edge_buffer_lock);
 				return false;
 			}
 
 			process_input(input);
+			_num_inputs++;
 		}
 
 		node_pair_t e = _edge_buffer.front();

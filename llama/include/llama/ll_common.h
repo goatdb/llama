@@ -203,16 +203,25 @@ inline bool operator< (const node_pair_t& a, const node_pair_t& b) {
  */
 #define GCC_VERSION (__GNUC__*10000 + __GNUC_MINOR__*100 + __GNUC_PATCHLEVEL__)
 
+
 /*
  * Color strings
  */
-#define LL_AC_RED     		"\x1b[31m"
-#define LL_AC_GREEN   		"\x1b[32m"
-#define LL_AC_YELLOW  		"\x1b[33m"
-#define LL_AC_BLUE    		"\x1b[34m"
-#define LL_AC_MAGENTA 		"\x1b[35m"
-#define LL_AC_CYAN    		"\x1b[36m"
-#define LL_AC_RESET   		"\x1b[0m"
+#define LL_C_RESET   		"\x1b[0m"
+#define LL_C_RED     		"\x1b[31m"
+#define LL_C_GREEN   		"\x1b[32m"
+#define LL_C_YELLOW  		"\x1b[33m"
+#define LL_C_BLUE    		"\x1b[34m"
+#define LL_C_MAGENTA 		"\x1b[35m"
+#define LL_C_CYAN    		"\x1b[36m"
+#define LL_C_WHITE   		"\x1b[37m"
+#define LL_C_B_RED     		"\x1b[1;31m"
+#define LL_C_B_GREEN   		"\x1b[1;32m"
+#define LL_C_B_YELLOW  		"\x1b[1;33m"
+#define LL_C_B_BLUE    		"\x1b[1;34m"
+#define LL_C_B_MAGENTA 		"\x1b[1;35m"
+#define LL_C_B_CYAN    		"\x1b[1;36m"
+#define LL_C_B_WHITE   		"\x1b[1;37m"
 
 
 

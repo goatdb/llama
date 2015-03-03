@@ -75,6 +75,7 @@
 #include "llama/ll_common.h"
 
 #include <sys/time.h>
+#include <sys/resource.h>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -131,7 +132,7 @@
 
 
 //==========================================================================//
-// Helpers                                                                  //
+// Helper Macros                                                            //
 //==========================================================================//
 
 /**
@@ -139,6 +140,11 @@
  */
 #define __COMPILER_FENCE	asm volatile("":::"memory");
 
+
+
+//==========================================================================//
+// Benchmarking Helpers                                                     //
+//==========================================================================//
 
 /**
  * Get the time in ms
@@ -188,6 +194,23 @@ inline double ll_rdtsc_per_ms(double ms = 100) {
 	return (ll_rdtsc() - s) / (et - st);
 }
 
+
+/**
+ * Get the maximum resident set size of the current process
+ *
+ * @return the maximum RSS in KB
+ */
+inline long ll_get_maxrss_kb() {
+	struct rusage ru_start;
+	getrusage(RUSAGE_SELF, &ru_start);
+	return ru_start.ru_maxrss;
+}
+
+
+
+//==========================================================================//
+// Array and Collection Helpers                                             //
+//==========================================================================//
 
 /**
  * Get a sum
@@ -282,6 +305,11 @@ inline T ll_max(std::vector<T>& v) {
 	return m;
 }
 
+
+
+//==========================================================================//
+// Miscellaneous Helpers                                                    //
+//==========================================================================//
 
 /**
  * Get the file extension
@@ -387,20 +415,30 @@ inline bool ll_level_within_bounds(int level, int min, int max) {
 
 
 //==========================================================================//
-// Debugging and output                                                     //
+// Debugging and Output Helpers                                             //
 //==========================================================================//
 
 //#define D_DEBUG_NODE			0
+
+/**
+ * Determine if the given FILE is a TTY
+ *
+ * @param file the file
+ * @return true if it is a TTY
+ */
+inline bool ll_is_tty(FILE* file) {
+	return isatty(fileno(file));
+}
 
 #define LL_IS_STDERR_TTY (isatty(fileno(stderr)))
 
 #if (defined(_DEBUG) || defined(D_DEBUG_NODE)) && defined(D_EXTRA)
 #	define LL_XD_PRINT(format, ...) { \
 		fprintf(stderr, "%s[DEBUG] %s::%s %s" format, \
-				LL_IS_STDERR_TTY ? LL_AC_CYAN : "", \
+				LL_IS_STDERR_TTY ? LL_C_CYAN : "", \
 				ll_classname(__PRETTY_FUNCTION__).c_str(), \
 				__FUNCTION__, \
-				LL_IS_STDERR_TTY ? LL_AC_RESET : "", \
+				LL_IS_STDERR_TTY ? LL_C_RESET : "", \
 				## __VA_ARGS__); }
 #else
 #	define LL_XD_PRINT(format, ...)
@@ -409,10 +447,10 @@ inline bool ll_level_within_bounds(int level, int min, int max) {
 #if defined(_DEBUG) || defined(D_DEBUG_NODE)
 #	define LL_D_PRINT(format, ...) { \
 		fprintf(stderr, "%s[DEBUG] %s::%s %s" format, \
-				LL_IS_STDERR_TTY ? LL_AC_CYAN : "", \
+				LL_IS_STDERR_TTY ? LL_C_CYAN : "", \
 				ll_classname(__PRETTY_FUNCTION__).c_str(), \
 				__FUNCTION__, \
-				LL_IS_STDERR_TTY ? LL_AC_RESET : "", \
+				LL_IS_STDERR_TTY ? LL_C_RESET : "", \
 				## __VA_ARGS__); }
 #else
 #	define LL_D_PRINT(format, ...)
@@ -421,9 +459,9 @@ inline bool ll_level_within_bounds(int level, int min, int max) {
 #ifdef D_DEBUG_NODE
 #	define LL_D_NODE_PRINT(node, format, ...) \
 		if ((node) == D_DEBUG_NODE) { LL_D_PRINT("%s[node %ld]%s " format, \
-				LL_IS_STDERR_TTY ? LL_AC_CYAN : "", \
+				LL_IS_STDERR_TTY ? LL_C_CYAN : "", \
 				(long) (node), \
-				LL_IS_STDERR_TTY ? LL_AC_RESET : "", \
+				LL_IS_STDERR_TTY ? LL_C_RESET : "", \
 				## __VA_ARGS__); }
 #	define LL_D_NODE2_PRINT(node1, node2, format, ...) { \
 		LL_D_NODE_PRINT(node1, format, __VA_ARGS__) \
@@ -435,26 +473,26 @@ inline bool ll_level_within_bounds(int level, int min, int max) {
 
 #define LL_E_PRINT(format, ...) { \
 	fprintf(stderr, "%s[ERROR] %s::%s %s" format, \
-			LL_IS_STDERR_TTY ? LL_AC_RED : "", \
+			LL_IS_STDERR_TTY ? LL_C_RED : "", \
 			ll_classname(__PRETTY_FUNCTION__).c_str(), \
 			__FUNCTION__, \
-			LL_IS_STDERR_TTY ? LL_AC_RESET : "", \
+			LL_IS_STDERR_TTY ? LL_C_RESET : "", \
 			## __VA_ARGS__); }
 
 #define LL_W_PRINT(format, ...) { \
 	fprintf(stderr, "%s[WARN ] %s::%s %s" format, \
-			LL_IS_STDERR_TTY ? LL_AC_YELLOW : "", \
+			LL_IS_STDERR_TTY ? LL_C_YELLOW : "", \
 			ll_classname(__PRETTY_FUNCTION__).c_str(), \
 			__FUNCTION__, \
-			LL_IS_STDERR_TTY ? LL_AC_RESET : "", \
+			LL_IS_STDERR_TTY ? LL_C_RESET : "", \
 			## __VA_ARGS__); }
 
 #define LL_I_PRINT(format, ...) { \
 	fprintf(stderr, "%s[INFO ] %s::%s %s" format, \
-			LL_IS_STDERR_TTY ? LL_AC_BLUE : "", \
+			LL_IS_STDERR_TTY ? LL_C_BLUE : "", \
 			ll_classname(__PRETTY_FUNCTION__).c_str(), \
 			__FUNCTION__, \
-			LL_IS_STDERR_TTY ? LL_AC_RESET : "", \
+			LL_IS_STDERR_TTY ? LL_C_RESET : "", \
 			## __VA_ARGS__); }
 
 #define LL_NOT_IMPLEMENTED { \

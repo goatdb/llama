@@ -50,6 +50,8 @@
 #define WEIBO_CSV_FIELD_UID		2
 #define WEIBO_CSV_FIELD_TEXT	6
 
+//#define TWEET_USE_WCHAR_T
+
 
 /**
  * A tweet
@@ -57,7 +59,12 @@
 typedef struct {
 
 	char* t_user;
+
+#ifdef TWEET_USE_WCHAR_T
 	wchar_t* t_text;
+#else
+	char* t_text;
+#endif
 
 } tweet_t;
 
@@ -65,7 +72,7 @@ typedef struct {
 /**
  * A Weibo data source - reading saved tweets from a csv file
  */
-class weibo_data_source_csv : ll_generic_data_source<tweet_t> {
+class weibo_data_source_csv : public ll_generic_data_source<tweet_t> {
 
 	std::vector<std::string> _file_names;
 	std::vector<FILE*> _file_handles;
@@ -208,6 +215,8 @@ public:
 		_tweet.t_user = fields[WEIBO_CSV_FIELD_UID];
 
 
+#ifdef TWEET_USE_WCHAR_T
+
 		// Translate the text to wchar_t*
 
 		size_t text_bytes = ((size_t) fields[WEIBO_CSV_FIELD_TEXT + 1])
@@ -238,6 +247,12 @@ public:
 		_w_text[w] = 0;
 
 		_tweet.t_text = _w_text;
+
+#else /* ! defined TWEET_USE_WCHAR_T */
+
+		_tweet.t_text = fields[WEIBO_CSV_FIELD_TEXT];
+
+#endif
 
 		return &_tweet;
 	}
