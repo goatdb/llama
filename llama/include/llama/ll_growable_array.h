@@ -67,7 +67,8 @@ template <typename T> struct ll_nop_deallocator {
 /**
  * A growable block array
  */
-template <typename T, int _block_size2, class deallocator,
+template <typename T, int _block_size2=10,
+		 class deallocator=ll_nop_deallocator<T>,
 		 bool use_deallocator=true,
 		 class block_allocator=ll_malloc_allocator<void*>,
 		 class block_deallocator=ll_free_deallocator<void*>,

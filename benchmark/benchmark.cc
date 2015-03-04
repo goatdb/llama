@@ -1409,6 +1409,11 @@ protected:
 	 */
 	virtual void compute(ll_mlcsr_ro_graph& G) {
 
+#ifdef BENCHMARK_WRITABLE
+		LL_E_PRINT("Using ll_benchmark_sliding_window_driver "
+				"with BENCHMARK_WRITABLE\n");
+		abort();
+#else
 		for (_counter->current_iteration = 0;
 				_counter->current_iteration < _counter->benchmark_count;
 				_counter->current_iteration++) {
@@ -1418,6 +1423,7 @@ protected:
 
 			_last_return_value = run_benchmark(G, _benchmark, *_stats);
 		}
+#endif
 	}
 };
 
