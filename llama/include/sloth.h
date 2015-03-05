@@ -142,6 +142,7 @@ class sloth_application {
 	ll_database _database;
 	sloth_ui_callbacks* _ui;
 
+	bool _initialized;
 	size_t _last_batch_inputs;
 
 
@@ -166,6 +167,7 @@ public:
 				loader_config, num_threads) {
 
 		_ui = NULL;
+		_initialized = false;
 		_last_batch_inputs = 0;
 	}
 
@@ -182,7 +184,10 @@ public:
 		  _driver(*this, &_database, &_source, &config->stream_config,
 				  &config->window_config, &config->loader_config,
 				  config->num_threads) {
+
 		_ui = NULL;
+		_initialized = false;
+		_last_batch_inputs = 0;
 	}
 
 
@@ -207,6 +212,12 @@ public:
 	 * Run the application
 	 */
 	void run() {
+
+		if (!_initialized) {
+			on_initialize(*_database.graph());
+			_initialized = true;
+		}
+
 		if (_ui) _ui->before_run();
 		_driver.run();
 		if (_ui) _ui->after_run();
@@ -247,6 +258,14 @@ protected:
 	inline void add_edge(node_t tail, node_t head) {
 		_source.add_edge_helper(tail, head);
 	}
+
+
+	/**
+	 * Custom graph initialization
+	 *
+	 * @param W the writable graph
+	 */
+	virtual void on_initialize(ll_writable_graph& W) {}
 
 
 	/**

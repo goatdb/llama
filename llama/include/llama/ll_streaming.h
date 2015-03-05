@@ -1406,6 +1406,7 @@ public:
 					else {
 						ll_mlcsr_ro_graph G_ro(&_database->graph()->ro_graph(),
 								level);
+						assert(G_ro.num_levels() > 0);
 						double t_compute_start = ll_get_time_ms();
 						compute(G_ro);
 						_last_compute_ms = ll_get_time_ms() - t_compute_start;
