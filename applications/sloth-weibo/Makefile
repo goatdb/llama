@@ -18,13 +18,20 @@ CFLAGS     := -g -O3 -DNDEBUG ${CFLAGS}
 DIR        := ../../bin
 SOURCES    := $(wildcard *.cc)
 TARGETS    := $(patsubst %.cc,$(DIR)/%,$(SOURCES)) 
+TARGETS_D  := $(patsubst %,%_debug,${TARGETS})
 
-.PHONY: all clean
+.PHONY: all clean debug
 
-all: $(TARGETS) 
+all: $(TARGETS)
+
+debug: $(TARGETS_D)
 
 clean:
-	rm -f $(TARGETS)
+	rm -f $(TARGETS) $(TARGETS_D)
+
+$(DIR)/%_debug: %.cc *.h
+	@echo CC $@ >&2
+	$(CC) $(CFLAGS_D) -o $@ $< $(LFLAGS)
 
 $(DIR)/%: %.cc *.h
 	@echo CC $@ >&2
