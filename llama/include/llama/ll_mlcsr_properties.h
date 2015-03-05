@@ -375,10 +375,14 @@ public:
 
 		auto* b = this->_properties.new_level(max_nodes);
 
-		if (this->_properties.count_existing_levels() <= 1)
+		// TODO Implement sparse properties
+
+		if (this->_properties.count_existing_levels() <= 1) {
 			b->dense_init();
-		else
+		}
+		else {
 			b->cow_init();
+		}
 
 		this->_latest_properties = b;
 		_last_write = -1;
