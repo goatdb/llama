@@ -110,6 +110,9 @@ class sloth_weibo_application : public sloth_application<tweet_t> {
 	string_to_node_map_t _names_to_nodes;
 	node_t _next_available_node;
 
+	std::string _name;
+	std::string _code;
+
 
 protected:
 
@@ -123,11 +126,17 @@ public:
 	 *
 	 * @param data_source the generic data source
 	 * @param config the configuration
+	 * @param name the application name
+	 * @param code the application code
 	 */
 	sloth_weibo_application(ll_generic_data_source<tweet_t>* data_source,
-			const sloth_weibo_config* config)
+			const sloth_weibo_config* config,
+			const char* name, const char* code)
 		: sloth_application<tweet_t>(data_source, &config->sloth),
 		_config(*config) {
+
+		_name = name;
+		_code = code;
 
 		_next_available_node = 0;
 	}
@@ -138,6 +147,22 @@ public:
 	 */
 	virtual ~sloth_weibo_application() {
 	}
+
+
+	/**
+	 * Get the application name
+	 *
+	 * @return the name
+	 */
+	inline const char* name() { return _name.c_str(); }
+
+
+	/**
+	 * Get the application code
+	 *
+	 * @return the code
+	 */
+	inline const char* code() { return _code.c_str(); }
 
 
 	/**
@@ -275,7 +300,7 @@ public:
 	 */
 	swa_tunk_rank(ll_generic_data_source<tweet_t>* data_source,
 			const sloth_weibo_config* config)
-		: sloth_weibo_application(data_source, config) {
+		: sloth_weibo_application(data_source, config, "TunkRank", "tr") {
 	
 		_tunk_rank = NULL;
 		_tunk_rank_n = 0;
@@ -479,7 +504,7 @@ public:
 	 */
 	swa_k_exposure(ll_generic_data_source<tweet_t>* data_source,
 			const sloth_weibo_config* config)
-		: sloth_weibo_application(data_source, config) {
+		: sloth_weibo_application(data_source, config, "K-Exposure", "k-exp") {
 	
 		_k = NULL;
 		_num_hashtags = 0;
@@ -796,6 +821,8 @@ void data_source_test(weibo_data_source_csv& data_source) {
 class sloth_weibo_ui : public sloth_ui_callbacks {
 
 	sloth_weibo_application* _application;
+	bool _warn_on_behind;
+
 	FILE* _info_file;
 	bool _info_tty;
 	FILE* _progress_file;
@@ -814,6 +841,7 @@ public:
 
 		_application = application;
 		_application->set_ui(this);
+		_warn_on_behind = false;
 
 		_info_file = stderr;
 		_info_tty = ll_is_tty(_info_file);
@@ -841,7 +869,7 @@ public:
 		const char* code1 = "ss";
 #else
 		const char* type = "Multiversioned";
-		const char* code1 = "";
+		const char* code1 = "mv";
 #endif
 
 #ifdef DEDUP
@@ -862,6 +890,15 @@ public:
 #else
 		const char* dv = "No";
 #endif
+
+		fprintf(_info_file, "%sBenchmark Name       :%s %s\n",
+				_info_tty ? LL_C_B_BLUE : "", _info_tty ? LL_C_RESET : "",
+				_application->name());
+		fprintf(_info_file, "%sBenchmark Code       :%s %s\n",
+				_info_tty ? LL_C_B_BLUE : "", _info_tty ? LL_C_RESET : "",
+				_application->code());
+
+		fprintf(_info_file, "\n");
 		
 		fprintf(_info_file, "%sSLOTH Implementation :%s %s\n",
 				_info_tty ? LL_C_B_BLUE : "", _info_tty ? LL_C_RESET : "",
@@ -872,7 +909,7 @@ public:
 		fprintf(_info_file, "%sLLAMA Deletion Vector:%s %s\n",
 				_info_tty ? LL_C_B_BLUE : "", _info_tty ? LL_C_RESET : "",
 				dv);
-		fprintf(_info_file, "%sConfiguration Code   :%s [%s%s]\n",
+		fprintf(_info_file, "%sConfiguration Code   :%s %s%s\n",
 				_info_tty ? LL_C_B_BLUE : "", _info_tty ? LL_C_RESET : "",
 				code1, code2);
 
@@ -947,24 +984,26 @@ public:
 	 */
 	virtual void behind(double ms) {
 
-		ll_sliding_window_driver& driver = _application->driver();
+		if (_warn_on_behind) {
+			ll_sliding_window_driver& driver = _application->driver();
 
-		if (_progress_tty) {
-			fprintf(_progress_file, "\r%s%4ld: ",
-					_progress_tty ? LL_C_B_BLUE : "",
-					driver.batch());
+			if (_progress_tty) {
+				fprintf(_progress_file, "\r%s%4ld: ",
+						_progress_tty ? LL_C_B_BLUE : "",
+						driver.batch());
+			}
+
+			ssize_t t = driver.window_config().swc_advance_interval_ms;
+			double p = t <= 0 ? 0 : 100.0 * ms/driver.last_interval_time_ms();
+
+			fprintf(_progress_file, "%s%6.3lf s behind",
+					_progress_tty ? LL_C_B_YELLOW : "",
+					ms / 1000.0);
+			if (t > 0) fprintf(_progress_file, " (%6.2lf%%)", p);
+
+			fprintf(_progress_file, "%s\n", _progress_tty ? LL_C_RESET : "");
+			fflush(_progress_file);
 		}
-
-		ssize_t t = driver.window_config().swc_advance_interval_ms;
-		double p = t <= 0 ? 0 : 100.0 * ms / driver.last_interval_time_ms();
-
-		fprintf(_progress_file, "%s%6.3lf s behind",
-				_progress_tty ? LL_C_B_YELLOW : "",
-				ms / 1000.0);
-		if (t > 0) fprintf(_progress_file, " (%6.2lf%%)", p);
-
-		fprintf(_progress_file, "%s\n", _progress_tty ? LL_C_RESET : "");
-		fflush(_progress_file);
 	}
 
 
@@ -987,11 +1026,12 @@ public:
 // The Command-Line Arguments                                               //
 //==========================================================================//
 
-static const char* SHORT_OPTIONS = "A:hM:R:r:st:W:";
+static const char* SHORT_OPTIONS = "A:E:hM:R:r:st:W:";
 
 static struct option LONG_OPTIONS[] =
 {
 	{"advance"      , required_argument, 0, 'A'},
+	{"edge-rate"    , required_argument, 0, 'E'},
 	{"help"         , no_argument      , 0, 'h'},
 	{"max-advances" , required_argument, 0, 'M'},
 	{"rate"         , required_argument, 0, 'R'},
@@ -1017,9 +1057,10 @@ static void usage(const char* arg0) {
 	
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -A, --advance N       Set the advance interval (seconds)\n");
+	fprintf(stderr, "  -E, --edge-rate N     Set the max stream rate (edges/second)\n");
 	fprintf(stderr, "  -h, --help            Show this usage information and exit\n");
 	fprintf(stderr, "  -M, --max-advances N  Set the maximum number of advances\n");
-	fprintf(stderr, "  -R, --rate N          Set the max stream rate (edges/second)\n");
+	fprintf(stderr, "  -R, --rate N          Set the max stream rate (inputs/second)\n");
 	fprintf(stderr, "  -r, --run APP         Run the given application\n");
 	fprintf(stderr, "  -s, --silent          Silent mode (do not print results)\n");
 	fprintf(stderr, "  -t, --threads N       Set the number of threads\n");
@@ -1060,6 +1101,10 @@ int main(int argc, char** argv)
 				advance_interval = atoi(optarg);
 				break;
 
+			case 'E':
+				config.sloth.stream_config.sc_max_edges_per_second = atoi(optarg);
+				break;
+
 			case 'h':
 				usage(argv[0]);
 				return 0;
@@ -1069,7 +1114,7 @@ int main(int argc, char** argv)
 				break;
 
 			case 'R':
-				config.sloth.stream_config.sc_max_edges_per_second = atoi(optarg);
+				config.sloth.max_inputs_per_second = atoi(optarg);
 				break;
 
 			case 'r':
@@ -1148,7 +1193,8 @@ int main(int argc, char** argv)
 	if (s_application == NULL) {
 		application = new swa_tunk_rank(&data_source, &config);
 	}
-	else if (strcmp(s_application, "tunkrank") == 0) {
+	else if (strcmp(s_application, "tunkrank") == 0
+			|| strcmp(s_application, "tr") == 0) {
 		application = new swa_tunk_rank(&data_source, &config);
 	}
 	else if (strcmp(s_application, "k-exposure") == 0

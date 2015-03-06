@@ -121,6 +121,7 @@ public:
 	ll_loader_config loader_config;
 
 	int num_threads;
+	ssize_t max_inputs_per_second;
 
 
 	/**
@@ -128,6 +129,7 @@ public:
 	 */
 	inline sloth_config() {
 		num_threads = -1;
+		max_inputs_per_second = -1;
 	}
 };
 
@@ -141,6 +143,9 @@ class sloth_application {
 	
 	ll_database _database;
 	sloth_ui_callbacks* _ui;
+	double _rdtsc_per_ms;
+
+	ssize_t _max_inputs_per_second;
 
 	bool _initialized;
 	size_t _last_batch_inputs;
@@ -156,12 +161,13 @@ public:
 	 * @param window_config the sliding window configuration
 	 * @param loader_config the loader configuration
 	 * @param num_threads the number of threads (-1 = all, must be >= 2)
+	 * @param max_inputs_per_second the maximum ingest rate (<= 0 = unliminted)
 	 */
 	sloth_application(ll_generic_data_source<input_t>* data_source,
 			const ll_stream_config* stream_config,
 			const ll_sliding_window_config* window_config,
 			const ll_loader_config* loader_config=NULL,
-			int num_threads=-1)
+			int num_threads=-1, ssize_t max_inputs_per_second=-1)
 		: _source(*this, data_source),
 		  _driver(*this, &_database, &_source, stream_config, window_config,
 				loader_config, num_threads) {
@@ -169,6 +175,8 @@ public:
 		_ui = NULL;
 		_initialized = false;
 		_last_batch_inputs = 0;
+		_rdtsc_per_ms = stream_config->rdtsc_per_ms();
+		_max_inputs_per_second = max_inputs_per_second;
 	}
 
 
@@ -188,6 +196,8 @@ public:
 		_ui = NULL;
 		_initialized = false;
 		_last_batch_inputs = 0;
+		_rdtsc_per_ms = config->stream_config.rdtsc_per_ms();
+		_max_inputs_per_second = config->max_inputs_per_second;
 	}
 
 
@@ -292,6 +302,8 @@ private:
 	class data_source_adapter : public ll_simple_data_source_adapter<input_t> {
 
 		sloth_application<input_t>& _owner;
+		int64_t _last_input_time;
+		int64_t _ahead;
 
 
 	public:
@@ -306,6 +318,9 @@ private:
 				ll_generic_data_source<input_t>* data_source)
 			: ll_simple_data_source_adapter<input_t>(data_source, false),
 			_owner(owner) {
+
+			_last_input_time = ll_rdtsc();
+			_ahead = 0;
 		}
 
 
@@ -328,7 +343,30 @@ private:
 		 * @param input the input item
 		 */
 		virtual void process_input(const input_t* input) {
+
 			_owner.on_input(input);
+
+			if (_owner._max_inputs_per_second > 0) {
+				
+				int64_t t = ll_rdtsc();
+				int64_t dt = t - _last_input_time;
+				_last_input_time = t;
+
+				// [expected]
+				//   = (1000 * rdtsc / ms) / (input / s)
+				//   = (rdtsc / s) / (input / s)
+				//   = (rdtsc / s) * (s / input)
+				//   = rdtsc / input
+				int64_t expected = 1000 * _owner._rdtsc_per_ms
+					/ _owner._max_inputs_per_second;
+
+				_ahead += expected - dt;
+
+				if (_ahead > 0) {
+					double ahead_ms = _ahead / _owner._rdtsc_per_ms;
+					usleep((long) (ahead_ms * 1000));
+				}
+			}
 		}
 	};
 
