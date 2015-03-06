@@ -235,6 +235,14 @@ public:
 
 
 	/**
+	 * Flag the driver to terminate at the beginning of the next batch
+	 */
+	void terminate() {
+		_driver.terminate();
+	}
+
+
+	/**
 	 * Get the sliding window driver
 	 * 
 	 * @return the driver

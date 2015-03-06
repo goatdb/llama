@@ -1120,6 +1120,8 @@ class ll_sliding_window_driver {
 
 	stream_loader* _loader;
 
+	volatile bool _terminate;
+
 	size_t _batch;
 	bool _last_skipped;
 
@@ -1176,6 +1178,7 @@ public:
 				_window_config.swc_window_snapshots);
 #endif
 
+		_terminate = false;
 		_batch = 0;
 		_last_skipped = false;
 
@@ -1299,6 +1302,15 @@ public:
 
 
 	/**
+	 * Flag the driver to terminate at the beginning of the next batch
+	 */
+	void terminate() {
+		_loader->terminate();
+		_terminate = true;
+	}
+
+
+	/**
 	 * Run the driver
 	 */
 	void run() {
@@ -1365,11 +1377,17 @@ public:
 #endif
 
 				while (!done) {
+
 					if (_window_config.swc_max_advances > 0) {
 						if (_batch >= _window_config.swc_max_advances) {
 							_loader->terminate();
 							break;
 						}
+					}
+
+					if (_terminate) {
+						_loader->terminate();
+						break;
 					}
 
 					_batch++;
