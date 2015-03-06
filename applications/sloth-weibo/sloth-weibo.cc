@@ -1023,6 +1023,39 @@ public:
 
 
 //==========================================================================//
+// Helpers                                                                  //
+//==========================================================================//
+
+/**
+ * Create an application
+ *
+ * @param code the application code
+ * @param data_source the data source
+ * @param config the configuration
+ * @return the application object, or NULL on error (error msg already printed)
+ */
+sloth_weibo_application* create_application(const char* code,
+	ll_generic_data_source<tweet_t>* data_source,
+	const sloth_weibo_config* config) {
+	
+	if (code == NULL) {
+		return new swa_tunk_rank(data_source, config);
+	}
+	else if (strcmp(code, "tunkrank") == 0 || strcmp(code, "tr") == 0) {
+		return new swa_tunk_rank(data_source, config);
+	}
+	else if (strcmp(code, "k-exposure") == 0 || strcmp(code, "k-exp") == 0) {
+		return new swa_k_exposure(data_source, config);
+	}
+	else {
+		fprintf(stderr, "Error: Unknown application \"%s\"\n", code);
+		return NULL;
+	}
+}
+
+
+
+//==========================================================================//
 // The Command-Line Arguments                                               //
 //==========================================================================//
 
@@ -1186,37 +1219,22 @@ int main(int argc, char** argv)
 	weibo_data_source_csv data_source(input_files);
 
 
-	// Create an application
+	// Create the application
 
-	sloth_weibo_application* application = NULL;
-
-	if (s_application == NULL) {
-		application = new swa_tunk_rank(&data_source, &config);
-	}
-	else if (strcmp(s_application, "tunkrank") == 0
-			|| strcmp(s_application, "tr") == 0) {
-		application = new swa_tunk_rank(&data_source, &config);
-	}
-	else if (strcmp(s_application, "k-exposure") == 0
-			|| strcmp(s_application, "k-exp") == 0) {
-		application = new swa_k_exposure(&data_source, &config);
-	}
-	else {
-		fprintf(stderr, "Error: Unknown application \"%s\"\n", s_application);
-		return 1;
-	}
-
-	sloth_weibo_ui ui(application); (void) ui;
+	sloth_weibo_application* application = create_application(s_application,
+			&data_source, &config);
+	if (!application) return 1;
 
 
 	// Run the application
 	
+	sloth_weibo_ui ui(application); (void) ui;
 	application->run();
 
 
 	// Finish
 	
-	if (application) delete application;
+	delete application;
 
 	return 0;
 }
