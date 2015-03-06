@@ -332,6 +332,8 @@ protected:
 		// TunkRank
 		// http://thenoisychannel.com/2009/01/13/a-twitter-analog-to-pagerank
 
+		// TODO Add a version that uses weights
+
 		ll_memory_helper m;
 
 		size_t N = G.max_nodes();
@@ -524,6 +526,11 @@ protected:
 	 */
 	virtual void on_initialize(ll_writable_graph& W) {
 		_k = W.ro_graph().create_uninitialized_edge_property_32("k", LL_T_INT32);
+
+#ifdef LL_S_SINGLE_SNAPSHOT
+		LL_E_PRINT("This app does not support LL_S_SINGLE_SNAPSHOT\n");
+		exit(1);
+#endif
 	}
 
 
@@ -1064,6 +1071,10 @@ int main(int argc, char** argv)
 				"specifying the window size\n");
 		return 1;
 	}
+
+#ifdef DEDUP
+	config.sloth.loader_config.lc_deduplicate = true;
+#endif
 
 
 	// Get the input files and create the data source
