@@ -796,6 +796,8 @@ void data_source_test(weibo_data_source_csv& data_source) {
 class sloth_weibo_ui : public sloth_ui_callbacks {
 
 	sloth_weibo_application* _application;
+	FILE* _info_file;
+	bool _info_tty;
 	FILE* _progress_file;
 	bool _progress_tty;
 	FILE* _results_file;
@@ -813,6 +815,9 @@ public:
 		_application = application;
 		_application->set_ui(this);
 
+		_info_file = stderr;
+		_info_tty = ll_is_tty(_info_file);
+
 		_progress_file = stderr;
 		_progress_tty = ll_is_tty(_progress_file);
 
@@ -829,7 +834,51 @@ public:
 	/**
 	 * Callback for starting the run
 	 */
-	virtual void before_run() {}
+	virtual void before_run() {
+
+#ifdef LL_S_SINGLE_SNAPSHOT
+		const char* type = "Single-Snapshot";
+		const char* code1 = "ss";
+#else
+		const char* type = "Multiversioned";
+		const char* code1 = "";
+#endif
+
+#ifdef DEDUP
+#	ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+		const char* dedup = "Weighted (Type 3)";
+		const char* code2 = "w";
+#	else
+		const char* dedup = "Simple (Type 2)";
+		const char* code2 = "d";
+#	endif
+#else
+		const char* dedup = "None (Type 1)";
+		const char* code2 = "";
+#endif
+
+#ifdef LL_DELETIONS
+		const char* dv = "Yes";
+#else
+		const char* dv = "No";
+#endif
+		
+		fprintf(_info_file, "%sSLOTH Implementation :%s %s\n",
+				_info_tty ? LL_C_B_BLUE : "", _info_tty ? LL_C_RESET : "",
+				type);
+		fprintf(_info_file, "%sSLOTH Deduplication  :%s %s\n",
+				_info_tty ? LL_C_B_BLUE : "", _info_tty ? LL_C_RESET : "",
+				dedup);
+		fprintf(_info_file, "%sLLAMA Deletion Vector:%s %s\n",
+				_info_tty ? LL_C_B_BLUE : "", _info_tty ? LL_C_RESET : "",
+				dv);
+		fprintf(_info_file, "%sConfiguration Code   :%s [%s%s]\n",
+				_info_tty ? LL_C_B_BLUE : "", _info_tty ? LL_C_RESET : "",
+				code1, code2);
+
+		fprintf(_info_file, "\n");
+		fflush(_info_file);
+	}
 
 
 	/**
