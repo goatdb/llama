@@ -825,13 +825,19 @@ class sloth_weibo_ui : public sloth_ui_callbacks {
 
 	sloth_weibo_application* _application;
 
-	bool _warn_on_behind_advance;
+	bool _warn_on_behind_batch;
+	bool _fail_on_behind_batch;
+	double _batch_behind_threshold;
+
 	bool _warn_on_behind_rate;
 	bool _fail_on_behind_rate;
 	double _target_rate_threshold;
+
 	size_t _behind_count_fail_threshold;
 
-	size_t _count_consecutive_behind;
+	size_t _count_consecutive_behind_batch;
+	size_t _count_consecutive_behind_rate;
+	size_t _last_behind_batch_batch;
 	bool _failed;
 	
 	FILE* _info_file;
@@ -853,13 +859,18 @@ public:
 		_application = application;
 		_application->set_ui(this);
 
-		_warn_on_behind_advance = false;
+		_warn_on_behind_batch = false;
+		_fail_on_behind_batch = application->config().fail_if_behind;
 		_warn_on_behind_rate = false;
 		_fail_on_behind_rate = application->config().fail_if_behind;
+
+		_batch_behind_threshold = 0.05;
 		_target_rate_threshold = 0.05;
 		_behind_count_fail_threshold = 2;
 
-		_count_consecutive_behind = 0;
+		_count_consecutive_behind_batch = 0;
+		_count_consecutive_behind_rate = 0;
+		_last_behind_batch_batch = 0;
 		_failed = false;
 
 
@@ -1018,11 +1029,11 @@ public:
 					< -_target_rate_threshold * max_ips;
 
 			if (behind_eps || behind_ips) {
-				_count_consecutive_behind++;
+				_count_consecutive_behind_rate++;
 
 				if (_behind_count_fail_threshold > 0
 						&& (_warn_on_behind_rate || _fail_on_behind_rate)
-						&& _count_consecutive_behind
+						&& _count_consecutive_behind_rate
 						>= _behind_count_fail_threshold) {
 
 					if (_progress_tty) {
@@ -1051,7 +1062,7 @@ public:
 				}
 			}
 			else {
-				_count_consecutive_behind = 0;
+				_count_consecutive_behind_rate = 0;
 			}
 		}
 
@@ -1074,25 +1085,43 @@ public:
 	 */
 	virtual void behind(double ms) {
 
-		if (_warn_on_behind_advance) {
-			ll_sliding_window_driver& driver = _application->driver();
+		if (!_warn_on_behind_batch && !_fail_on_behind_batch) return;
+		
+		ll_sliding_window_driver& driver = _application->driver();
 
-			if (_progress_tty) {
-				fprintf(_progress_file, "\r%s%4ld: ",
-						_progress_tty ? LL_C_B_BLUE : "",
-						driver.batch());
-			}
+		ssize_t t = driver.window_config().swc_advance_interval_ms;
+		double p = t <= 0 ? 0 : ms/driver.last_interval_time_ms();
+		if (p < _batch_behind_threshold) return;
 
-			ssize_t t = driver.window_config().swc_advance_interval_ms;
-			double p = t <= 0 ? 0 : 100.0 * ms/driver.last_interval_time_ms();
+		if (_last_behind_batch_batch + 1 < driver.batch()) {
+			_count_consecutive_behind_batch = 0;
+		}
+		_count_consecutive_behind_batch++;
+		_last_behind_batch_batch = driver.batch();
 
-			fprintf(_progress_file, "%s%6.3lf s behind",
-					_progress_tty ? LL_C_B_YELLOW : "",
-					ms / 1000.0);
-			if (t > 0) fprintf(_progress_file, " (%6.2lf%%)", p);
+		if (_count_consecutive_behind_batch < _behind_count_fail_threshold) {
+			return;
+		}
 
-			fprintf(_progress_file, "%s\n", _progress_tty ? LL_C_RESET : "");
-			fflush(_progress_file);
+		if (_progress_tty) {
+			fprintf(_progress_file, "\r%s%4ld: ",
+					_progress_tty ? LL_C_B_BLUE : "",
+					driver.batch());
+		}
+
+		fprintf(_progress_file, " %sCompute threads are %6.3lf s behind",
+				_progress_tty ? (_fail_on_behind_batch
+					? LL_C_B_RED : LL_C_B_YELLOW) : "",
+				ms / 1000.0);
+		if (t > 0) fprintf(_progress_file, " (%0.2lf%%)", 100 * p);
+		if (_fail_on_behind_batch) fprintf(_progress_file, ", stopping");
+
+		fprintf(_progress_file, "%s\n", _progress_tty ? LL_C_RESET : "");
+		fflush(_progress_file);
+
+		if (_fail_on_behind_batch) {
+			_application->terminate();
+			_failed = true;
 		}
 	}
 
@@ -1218,8 +1247,8 @@ int main(int argc, char** argv)
 	bool timeliness = false;
 	double timeliness_window_size_accuracy_threshold = 0.05;
 	std::vector<int> timeliness_steps;
+	timeliness_steps.push_back(1000);
 	timeliness_steps.push_back(100);
-	timeliness_steps.push_back(10);
 
 	int advance_interval = -1;
 	int window_size = -1;
