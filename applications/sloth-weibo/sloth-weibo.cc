@@ -1392,6 +1392,10 @@ int main(int argc, char** argv)
 			bool done = false;
 			while (!done) {
 				advance_interval += step;
+				
+				if (ti > 0 && advance_interval >= good_advance_interval) {
+					break;
+				}
 
 				fprintf(stderr, "\n%s================ Trying advance interval "
 						"%0.2lf seconds ================%s\n\n",
@@ -1457,23 +1461,48 @@ int main(int argc, char** argv)
 				}
 
 
+				// If we failed, check to see if it's even worth trying more
+
+				if (ui.failed()) {
+					if (config.sloth.window_config.swc_window_snapshots <= 1) {
+						done = true;
+					}
+				}
+
+
 				// Clean up
 
 				delete application;
 			}
+
+
+			// If good_advance_interval is zero, we must have failed
+
+			if (good_advance_interval == 0) break;
 		}
 
 
 		// Report the results
 
-		fprintf(stderr, "\n%s============================== SUCCESS "
-				"==============================%s\n",
-				stderr_tty ? LL_C_B_GREEN : "",
-				stderr_tty ? LL_C_RESET : "");
-		fprintf(stderr, "%s\nTimeliness:%s %0.2lf seconds\n",
-				stderr_tty ? LL_C_B_GREEN : "",
-				stderr_tty ? LL_C_RESET : "",
-				advance_interval / 1000.0);
+		if (good_advance_interval > 0) {
+			fprintf(stderr, "\n%s============================== SUCCESS "
+					"==============================%s\n",
+					stderr_tty ? LL_C_B_GREEN : "",
+					stderr_tty ? LL_C_RESET : "");
+			fprintf(stderr, "%s\nTimeliness:%s %0.2lf seconds\n",
+					stderr_tty ? LL_C_B_GREEN : "",
+					stderr_tty ? LL_C_RESET : "",
+					advance_interval / 1000.0);
+		}
+		else {
+			fprintf(stderr, "\n\n%s============================== FAILURE "
+					"==============================%s\n",
+					stderr_tty ? LL_C_B_RED : "",
+					stderr_tty ? LL_C_RESET : "");
+			fprintf(stderr, "%s\nTimeliness:%s N/A\n",
+					stderr_tty ? LL_C_B_RED : "",
+					stderr_tty ? LL_C_RESET : "");
+		}
 
 
 		// Write the results to a CSV file
@@ -1508,7 +1537,8 @@ int main(int argc, char** argv)
 			if (f != NULL) {
 
 				if (needs_header) {
-					fprintf(f, "input_rate,edge_rate,window_size,timeliness\n");
+					fprintf(f, "input_rate,edge_rate,window_size,max_length,"
+							"timeliness\n");
 				}
 
 				std::ostringstream ss;
@@ -1522,7 +1552,16 @@ int main(int argc, char** argv)
 				}
 
 				ss << "," << (window_size / 1000.0);
-				ss << "," << (good_advance_interval / 1000.0);
+
+				ss << ",";
+				if (max_length > 0) {
+					ss << (max_length / 1000.0);
+				}
+
+				ss << ",";
+				if (good_advance_interval > 0) {
+					ss << (good_advance_interval / 1000.0);
+				}
 
 				fprintf(f, "%s\n", ss.str().c_str());
 
