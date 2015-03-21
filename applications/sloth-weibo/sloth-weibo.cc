@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <getopt.h>
 #include <libgen.h>
+#include <sstream>
 #include <unordered_map>
 
 #include <sloth.h>
@@ -59,6 +60,7 @@ public:
 	sloth_config sloth;
 	bool verbose;
 	bool print_results;
+	bool fail_if_behind;
 
 
 	// Common options for algorithms
@@ -86,6 +88,7 @@ public:
 
 		verbose = false;
 		print_results = true;
+		fail_if_behind = false;
 
 		top_n = 10;
 
@@ -821,8 +824,16 @@ void data_source_test(weibo_data_source_csv& data_source) {
 class sloth_weibo_ui : public sloth_ui_callbacks {
 
 	sloth_weibo_application* _application;
-	bool _warn_on_behind;
 
+	bool _warn_on_behind_advance;
+	bool _warn_on_behind_rate;
+	bool _fail_on_behind_rate;
+	double _target_rate_threshold;
+	size_t _behind_count_fail_threshold;
+
+	size_t _count_consecutive_behind;
+	bool _failed;
+	
 	FILE* _info_file;
 	bool _info_tty;
 	FILE* _progress_file;
@@ -841,7 +852,18 @@ public:
 
 		_application = application;
 		_application->set_ui(this);
-		_warn_on_behind = false;
+
+		_warn_on_behind_advance = false;
+		_warn_on_behind_rate = false;
+		_fail_on_behind_rate = application->config().fail_if_behind;
+		_target_rate_threshold = 0.05;
+		_behind_count_fail_threshold = 2;
+
+		_count_consecutive_behind = 0;
+		_failed = false;
+
+
+		// Output files
 
 		_info_file = stderr;
 		_info_tty = ll_is_tty(_info_file);
@@ -850,6 +872,16 @@ public:
 		_progress_tty = ll_is_tty(_progress_file);
 
 		_results_file = stderr;
+	}
+
+
+	/**
+	 * Return true if the run failed
+	 *
+	 * @param true if the run failed
+	 */
+	inline bool failed() {
+		return _failed;
 	}
 
 
@@ -952,21 +984,79 @@ public:
 					driver.batch());
 		}
 
+		double inputs_per_second = _application->last_batch_inputs()
+			/ driver.last_interval_time_ms() * 1000.0;
+		double edges_per_second = driver.last_batch_requests()
+			/ driver.last_interval_time_ms() * 1000.0;
+
 		fprintf(_progress_file, "%s"
 				"%5.0lf K tweets/s, %5.0lf K edges/s, "
 				"%6.3lf s adv, %6.3lf s run, "
 				"%6.3lf GB MaxRSS, %6.3lf M nodes%s\n",
 				_progress_tty ? LL_C_B_BLUE : "",
-				_application->last_batch_inputs()
-					/ driver.last_interval_time_ms(),
-				driver.last_batch_requests()
-					/ driver.last_interval_time_ms(),
+				inputs_per_second / 1000.0,
+				edges_per_second / 1000.0,
 				driver.last_advance_time_ms() / 1000.0,
 				driver.last_compute_time_ms() / 1000.0,
 				ll_get_maxrss_kb() / 1048576.0,
 				_application->num_nodes() / 1000000.0,
 				_progress_tty ? LL_C_RESET : "");
 		fflush(_progress_file);
+
+
+		// Deal with target rate threshold, but not for the first batch, which
+		// is allowed to be behind
+
+		if (_target_rate_threshold >= 0 && driver.batch() > 1) {
+
+			size_t max_eps = driver.stream_config().sc_max_edges_per_second;
+			size_t max_ips = _application->max_inputs_per_second();
+
+			bool behind_eps = max_eps > 0 && edges_per_second - max_eps
+					< -_target_rate_threshold * max_eps;
+			bool behind_ips = max_ips > 0 && inputs_per_second - max_ips
+					< -_target_rate_threshold * max_ips;
+
+			if (behind_eps || behind_ips) {
+				_count_consecutive_behind++;
+
+				if (_behind_count_fail_threshold > 0
+						&& (_warn_on_behind_rate || _fail_on_behind_rate)
+						&& _count_consecutive_behind
+						>= _behind_count_fail_threshold) {
+
+					if (_progress_tty) {
+						fprintf(_progress_file, "\r%s%4ld: ",
+								_progress_tty ? LL_C_B_BLUE : "",
+								driver.batch());
+					}
+
+					double p_eps = max_eps > 0 ? (max_eps - edges_per_second)
+						/ max_eps : 0;
+					double p_ips = max_ips > 0 ? (max_ips - inputs_per_second)
+						/ max_ips : 0;
+
+					fprintf(_progress_file, "%sRate %0.2lf%% below the target"
+							"%s%s\n",
+							_progress_tty ? (_fail_on_behind_rate
+								? LL_C_B_RED : LL_C_B_YELLOW) : "",
+							std::max(p_eps, p_ips) * 100,
+							_fail_on_behind_rate ? ", stopping" : "",
+							_progress_tty ? LL_C_RESET : "");
+
+					if (_fail_on_behind_rate) {
+						_application->terminate();
+						_failed = true;
+					}
+				}
+			}
+			else {
+				_count_consecutive_behind = 0;
+			}
+		}
+
+
+		// Print the results
 
 		if (_application->config().print_results) {
 			fprintf(_results_file, "\n");
@@ -984,7 +1074,7 @@ public:
 	 */
 	virtual void behind(double ms) {
 
-		if (_warn_on_behind) {
+		if (_warn_on_behind_advance) {
 			ll_sliding_window_driver& driver = _application->driver();
 
 			if (_progress_tty) {
@@ -1059,19 +1149,22 @@ sloth_weibo_application* create_application(const char* code,
 // The Command-Line Arguments                                               //
 //==========================================================================//
 
-static const char* SHORT_OPTIONS = "A:E:hM:R:r:st:W:";
+static const char* SHORT_OPTIONS = "A:C:E:FhM:R:r:sTt:W:";
 
 static struct option LONG_OPTIONS[] =
 {
-	{"advance"      , required_argument, 0, 'A'},
-	{"edge-rate"    , required_argument, 0, 'E'},
-	{"help"         , no_argument      , 0, 'h'},
-	{"max-advances" , required_argument, 0, 'M'},
-	{"rate"         , required_argument, 0, 'R'},
-	{"run"          , required_argument, 0, 'r'},
-	{"silent"       , no_argument      , 0, 's'},
-	{"threads"      , required_argument, 0, 't'},
-	{"window"       , required_argument, 0, 'W'},
+	{"advance"       , required_argument, 0, 'A'},
+	{"csv-result"    , required_argument, 0, 'C'},
+	{"edge-rate"     , required_argument, 0, 'E'},
+	{"fail-if-behind", no_argument      , 0, 'F'},
+	{"help"          , no_argument      , 0, 'h'},
+	{"max-length"    , required_argument, 0, 'M'},
+	{"rate"          , required_argument, 0, 'R'},
+	{"run"           , required_argument, 0, 'r'},
+	{"silent"        , no_argument      , 0, 's'},
+	{"timeliness"    , no_argument      , 0, 'T'},
+	{"threads"       , required_argument, 0, 't'},
+	{"window"        , required_argument, 0, 'W'},
 	{0, 0, 0, 0}
 };
 
@@ -1090,12 +1183,15 @@ static void usage(const char* arg0) {
 	
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -A, --advance N       Set the advance interval (seconds)\n");
+	fprintf(stderr, "  -C, --csv-result F    Append the result to the given CSV file\n");
 	fprintf(stderr, "  -E, --edge-rate N     Set the max stream rate (edges/second)\n");
+	fprintf(stderr, "  -F, --fail-if-behind  Fail if the actual rate drops below max\n");
 	fprintf(stderr, "  -h, --help            Show this usage information and exit\n");
-	fprintf(stderr, "  -M, --max-advances N  Set the maximum number of advances\n");
+	fprintf(stderr, "  -M, --max-length N    Set the maximum experiment length (seconds)\n");
 	fprintf(stderr, "  -R, --rate N          Set the max stream rate (inputs/second)\n");
 	fprintf(stderr, "  -r, --run APP         Run the given application\n");
 	fprintf(stderr, "  -s, --silent          Silent mode (do not print results)\n");
+	fprintf(stderr, "  -T, --timeliness      Compute timeliness\n");
 	fprintf(stderr, "  -t, --threads N       Set the number of threads\n");
 	fprintf(stderr, "  -W, --window N        Set the window size (seconds)\n");
 }
@@ -1113,11 +1209,21 @@ int main(int argc, char** argv)
 {
 	std::setlocale(LC_ALL, "en_US.utf8");
 
+	bool stderr_tty = ll_is_tty(stderr);
+
 	sloth_weibo_config config;
 	const char* s_application = NULL;
+	const char* csv_result = NULL;
+
+	bool timeliness = false;
+	double timeliness_window_size_accuracy_threshold = 0.05;
+	std::vector<int> timeliness_steps;
+	timeliness_steps.push_back(100);
+	timeliness_steps.push_back(10);
 
 	int advance_interval = -1;
 	int window_size = -1;
+	int max_length = -1;
 
 
 	// Pase the command-line arguments
@@ -1131,11 +1237,19 @@ int main(int argc, char** argv)
 		switch (c) {
 
 			case 'A':
-				advance_interval = atoi(optarg);
+				advance_interval = (int) (atof(optarg) * 1000 + 0.5);
+				break;
+
+			case 'C':
+				csv_result = optarg;
 				break;
 
 			case 'E':
 				config.sloth.stream_config.sc_max_edges_per_second = atoi(optarg);
+				break;
+
+			case 'F':
+				config.fail_if_behind = true;
 				break;
 
 			case 'h':
@@ -1143,7 +1257,7 @@ int main(int argc, char** argv)
 				return 0;
 
 			case 'M':
-				config.sloth.window_config.swc_max_advances = atoi(optarg);
+				max_length = (int) (atof(optarg) * 1000 + 0.5);
 				break;
 
 			case 'R':
@@ -1158,12 +1272,16 @@ int main(int argc, char** argv)
 				config.print_results = false;
 				break;
 
+			case 'T':
+				timeliness = true;
+				break;
+
 			case 't':
 				config.sloth.num_threads = atoi(optarg);
 				break;
 
 			case 'W':
-				window_size = atoi(optarg);
+				window_size = (int) (atof(optarg) * 1000 + 0.5);
 				break;
 
 			case '?':
@@ -1175,28 +1293,63 @@ int main(int argc, char** argv)
 		}
 	}
 
-	if (window_size >= 0) {
-		int w = window_size * 1000;
-		int a = advance_interval * 1000;
+	if (csv_result != NULL) {
+		if (!timeliness) {
+			fprintf(stderr, "Error: Option -C/--csv-result works only with "
+					"-T/--timeliness\n");
+			return 1;
+		}
+	}
 
-		if (advance_interval < 0) {
-			config.sloth.window_config.swc_advance_interval_ms = w;
-			config.sloth.window_config.swc_window_snapshots = 1;
+
+	// Configure the window
+
+	if (timeliness) {
+		if (advance_interval >= 0) {
+			fprintf(stderr, "Error: Cannot combine -T/--timeliness and "
+					"-A/--advance\n");
+			return 1;
 		}
-		else if (w % a == 0) {
-			config.sloth.window_config.swc_advance_interval_ms = a;
-			config.sloth.window_config.swc_window_snapshots = w / a;
-		}
-		else {
-			fprintf(stderr, "Error: The advance interval does not divide "
-					"the window size\n");
+		if (window_size < 0) {
+			fprintf(stderr, "Error: Option -T/--timeliness requires "
+					"-W/--window\n");
 			return 1;
 		}
 	}
 	else {
-		fprintf(stderr, "Error: Specifying the advance interval without "
-				"specifying the window size\n");
-		return 1;
+		if (window_size >= 0) {
+			int w = window_size;
+			int a = advance_interval;
+
+			if (advance_interval < 0) {
+				config.sloth.window_config.swc_advance_interval_ms = w;
+				config.sloth.window_config.swc_window_snapshots = 1;
+			}
+			else if (w % a == 0) {
+				config.sloth.window_config.swc_advance_interval_ms = a;
+				config.sloth.window_config.swc_window_snapshots = w / a;
+			}
+			else {
+				fprintf(stderr, "Error: The advance interval does not divide "
+						"the window size\n");
+				return 1;
+			}
+		}
+		else if (advance_interval >= 0) {
+			fprintf(stderr, "Error: Specifying the advance interval without "
+					"specifying the window size\n");
+			return 1;
+		}
+
+		if (max_length >= 0) {
+			if (config.sloth.window_config.swc_advance_interval_ms <= 0) {
+				fprintf(stderr, "Error: The advance interval is not set\n");
+			}
+			else {
+				config.sloth.window_config.swc_max_advances = max_length
+					/ config.sloth.window_config.swc_advance_interval_ms;
+			}
+		}
 	}
 
 #ifdef DEDUP
@@ -1204,7 +1357,7 @@ int main(int argc, char** argv)
 #endif
 
 
-	// Get the input files and create the data source
+	// Get the input files
 
 	std::vector<std::string> input_files;
 	for (int i = optind; i < argc; i++) {
@@ -1216,25 +1369,193 @@ int main(int argc, char** argv)
 		return 1;
 	}
 
-	weibo_data_source_csv data_source(input_files);
 
-
-	// Create the application
-
-	sloth_weibo_application* application = create_application(s_application,
-			&data_source, &config);
-	if (!application) return 1;
-
-
-	// Run the application
+	// Create the application and run it
 	
-	sloth_weibo_ui ui(application); (void) ui;
-	application->run();
+	if (timeliness) {
+
+		// Run timeliness estimation
+
+		config.fail_if_behind = true;
+		config.print_results = false;
+
+		int good_advance_interval = 0;
+
+		for (size_t ti = 0; ti < timeliness_steps.size(); ti++) {
+			int step = timeliness_steps[ti];
+
+			advance_interval = good_advance_interval;
+			if (ti > 0) {
+				advance_interval -= timeliness_steps[ti - 1];
+			}
+
+			bool done = false;
+			while (!done) {
+				advance_interval += step;
+
+				fprintf(stderr, "\n%s================ Trying advance interval "
+						"%0.2lf seconds ================%s\n\n",
+						stderr_tty ? LL_C_B_CYAN : "",
+						advance_interval / 1000.0,
+						stderr_tty ? LL_C_RESET : "");
+
+
+				// Configure the computation
+
+				config.sloth.window_config.swc_advance_interval_ms
+					= advance_interval;
+				config.sloth.window_config.swc_window_snapshots
+					= window_size / advance_interval;
+
+				int w = config.sloth.window_config.swc_window_snapshots
+					* advance_interval;
+				if (w < window_size) {
+					config.sloth.window_config.swc_window_snapshots++;
+					w = config.sloth.window_config.swc_window_snapshots
+						* advance_interval;
+					double p = std::abs(w - window_size) / (double)window_size;
+					if (p > timeliness_window_size_accuracy_threshold) {
+						fprintf(stderr, "%sWarning: %sCannot set the window "
+								"size with sufficient accuracy "
+								"(we are %0.2lf%% off)\n\n",
+								stderr_tty ? LL_C_B_YELLOW : "",
+								stderr_tty ? LL_C_RESET : "",
+								p * 100);
+					}
+				}
+
+				if (max_length > 0) {
+					config.sloth.window_config.swc_max_advances = max_length
+						/ config.sloth.window_config.swc_advance_interval_ms;
+				}
+
+
+				// Create the data source and the application
+
+				weibo_data_source_csv data_source(input_files);
+				sloth_weibo_application* application
+					= create_application(s_application, &data_source, &config);
+				if (!application) return 1;
+
+
+				// Run the application
+
+				sloth_weibo_ui ui(application);
+				application->run();
+
+
+				// If we did not fail, we have a good advance time
+
+				if (!ui.failed()) {
+					done = true;
+					good_advance_interval = advance_interval;
+					fprintf(stderr, "%s\nAdvance interval %0.2lf seconds "
+							"works.%s\n\n",
+							stderr_tty ? LL_C_B_GREEN : "",
+							advance_interval / 1000.0,
+							stderr_tty ? LL_C_RESET : "");
+				}
+
+
+				// Clean up
+
+				delete application;
+			}
+		}
+
+
+		// Report the results
+
+		fprintf(stderr, "\n%s============================== SUCCESS "
+				"==============================%s\n",
+				stderr_tty ? LL_C_B_GREEN : "",
+				stderr_tty ? LL_C_RESET : "");
+		fprintf(stderr, "%s\nTimeliness:%s %0.2lf seconds\n",
+				stderr_tty ? LL_C_B_GREEN : "",
+				stderr_tty ? LL_C_RESET : "",
+				advance_interval / 1000.0);
+
+
+		// Write the results to a CSV file
+
+		if (csv_result != NULL) {
+			
+			FILE* f;
+			bool needs_header = false;
+			
+			if (strcmp(csv_result, "") == 0 || strcmp(csv_result, "-") == 0) {
+				f = stdout;
+				needs_header = true;
+			}
+			else {
+
+				f = fopen(csv_result, "r");
+				if (f == NULL) {
+					needs_header = true;
+				}
+				else {
+					fclose(f);
+				}
+
+				f = fopen(csv_result, "a");
+				if (f == NULL) {
+					fprintf(stderr, "Error: Cannot open or create the output "
+							"CSV file: %s\n",
+							strerror(errno));
+				}
+			}
+
+			if (f != NULL) {
+
+				if (needs_header) {
+					fprintf(f, "input_rate,edge_rate,window_size,timeliness\n");
+				}
+
+				std::ostringstream ss;
+				if (config.sloth.max_inputs_per_second > 0) {
+					ss << config.sloth.max_inputs_per_second;
+				}
+
+				ss << ",";
+				if (config.sloth.stream_config.sc_max_edges_per_second > 0) {
+					ss << config.sloth.stream_config.sc_max_edges_per_second;
+				}
+
+				ss << "," << (window_size / 1000.0);
+				ss << "," << (good_advance_interval / 1000.0);
+
+				fprintf(f, "%s\n", ss.str().c_str());
+
+				if (f != stdout && f != stderr) fclose(f);
+			}
+		}
+	}
+	else {
+
+		// Run normal computation
+
+		// Create the data source and the application
+
+		weibo_data_source_csv data_source(input_files);
+
+		sloth_weibo_application* application
+			= create_application(s_application, &data_source, &config);
+		if (!application) return 1;
+
+
+		// Run the application
+		
+		sloth_weibo_ui ui(application); (void) ui;
+		application->run();
+
+
+		// Clean up
+
+		delete application;
+	}
 
 
 	// Finish
-	
-	delete application;
 
 	return 0;
 }

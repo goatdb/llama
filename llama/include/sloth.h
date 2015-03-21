@@ -219,6 +219,16 @@ public:
 
 
 	/**
+	 * Get the maximum inputs per second
+	 *
+	 * @return the max inputs per second (0 = unlimited)
+	 */
+	inline size_t max_inputs_per_second() {
+		return _max_inputs_per_second <= 0 ? 0 : _max_inputs_per_second;
+	}
+
+
+	/**
 	 * Run the application
 	 */
 	void run() {
