@@ -1373,7 +1373,7 @@ private:
 		int id = ((int) level) - 1;
 
 #ifdef LL_MIN_LEVEL
-		if (id == this->_min_level) return -1;
+		if (id < this->_min_level) return -1;
 #endif
 #ifdef LL_MLCSR_LEVEL_ID_WRAP
 		if (id < 0) id = LL_MAX_LEVEL;
