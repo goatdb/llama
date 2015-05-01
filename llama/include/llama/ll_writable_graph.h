@@ -767,7 +767,7 @@ public:
 				assert(_ro_graph.get_edge_forward_streaming()->get(ro_edge) == 0);
 #else
 				LL_D_NODE2_PRINT(source, target,
-						"Found duplicate of %lx, old weight = %u\n"
+						"Found duplicate of %lx, old weight = %u\n",
 						ro_edge, ro_weight);
 #endif
 				delete_edge(source, ro_edge);
