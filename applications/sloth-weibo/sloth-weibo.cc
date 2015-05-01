@@ -30,7 +30,6 @@
  * SUCH DAMAGE.
  */
 
-#define D_DEBUG_NODE	8194
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
