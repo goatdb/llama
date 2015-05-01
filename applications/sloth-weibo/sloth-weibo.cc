@@ -30,6 +30,7 @@
  * SUCH DAMAGE.
  */
 
+#define D_DEBUG_NODE	8194
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -362,6 +363,11 @@ protected:
 
 		// TODO Add a version that uses weights
 
+#ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+		ll_mlcsr_edge_property<uint32_t>& weights
+			= *G.get_edge_weights_streaming();
+#endif
+
 		ll_memory_helper m;
 
 		size_t N = G.max_nodes();
@@ -395,10 +401,27 @@ protected:
 					if (degree == 0) continue;
 
 					float delta = (1 + p * tr[n]) / degree;
+
+#ifdef LL_S_WEIGHTS_INSTEAD_OF_DUPLICATE_EDGES
+					ll_foreach_out_ext(e, w, G, n) {
+						float d = weights[e] * delta;
+#	ifdef _DEBUG
+						if (weights[e] == 0) {
+							LL_W_PRINT("Zero weight for edge %lx: "
+									"%ld --> %ld\n",
+									e, (long) n, (long) w);
+						}
+						assert(weights[e] > 0);
+#	endif
+						ATOMIC_ADD<float>(&tr_next[w], d);
+						total_prv += d;
+					}
+#else
 					ll_foreach_out(w, G, n) {
 						ATOMIC_ADD<float>(&tr_next[w], delta);
 						total_prv += delta;
 					}
+#endif
 				}
 
 				ATOMIC_ADD(&total, total_prv);

@@ -758,12 +758,18 @@ public:
 			ro_edge = _ro_graph.find(source, target);
 			if (ro_edge != LL_NIL_EDGE) {
 				ro_weight = (*w)[ro_edge];
+#ifndef LL_S_SINGLE_SNAPSHOT
 				LL_D_NODE2_PRINT(source, target,
 						"Found duplicate of %lx, old weight = %u, "
 						"old forward = %lx\n",
 						ro_edge, ro_weight,
 						_ro_graph.get_edge_forward_streaming()->get(ro_edge));
 				assert(_ro_graph.get_edge_forward_streaming()->get(ro_edge) == 0);
+#else
+				LL_D_NODE2_PRINT(source, target,
+						"Found duplicate of %lx, old weight = %u\n"
+						ro_edge, ro_weight);
+#endif
 				delete_edge(source, ro_edge);
 			}
 		}

@@ -1852,6 +1852,14 @@ private:
 								< LL_EDGE_LEVEL(forward));
 						streaming_weights->cow_write_add(forward,
 								-weight);
+#			ifdef _DEBUG
+						if ((*streaming_weights)[forward] <= 0) {
+							LL_E_PRINT("Weight dropped to zero: "
+									"edge=%lx %ld --> %ld: forward=%lx "
+									"w=%d\n",
+									e, n, t, forward, (int) weight);
+						}
+#			endif
 					}
 				}
 			}
@@ -2321,8 +2329,8 @@ public:
 				IF_LL_PRECOMPUTED_DEGREE(", degree=%ld")
 				IF_LL_DELETIONS(", max_level=%d")
 				", this=%p, begin=%p]\n", (int) level, (long) iter.left
-				IF_LL_PRECOMPUTED_DEGREE(, (long) b.degree)
-				IF_LL_DELETIONS(, (int) iter.max_level)
+				IF_LL_PRECOMPUTED_DEGREE(, (long) b->degree)
+				IF_LL_DELETIONS(, (int) iter.max_level),
 				this, this->_begin[level]);
 	}
 
