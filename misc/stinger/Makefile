@@ -2,7 +2,7 @@ LLAMA=../../llama
 STINGER=$(HOME)/Projects/3rd-party/stinger-r633
 
 CC         := g++
-CFLAGS     := -Wall -fopenmp -std=c++0x -DLL_MEMORY_ONLY -I. \
+CFLAGS     := -Wall -fopenmp -std=gnu++11 -DLL_MEMORY_ONLY -I. \
 	-I$(LLAMA)/include -I$(STINGER)/include -Wno-unused-function \
 	-Wno-unused-variable -Wno-sign-compare
 LFLAGS     := -L$(STINGER) -lstinger -lm -lrt

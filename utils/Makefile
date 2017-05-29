@@ -3,7 +3,7 @@
 #
 
 CC         := g++
-CFLAGS     := -Wall -std=c++0x -fopenmp -I../llama/include
+CFLAGS     := -Wall -std=gnu++11 -fopenmp -I../llama/include
 LFLAGS     := 
 
 SOURCES    := $(wildcard *.cpp)

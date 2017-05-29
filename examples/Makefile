@@ -3,7 +3,7 @@
 #
 
 CC         := g++
-CFLAGS     := -Wall -fopenmp -std=c++0x -DLL_PERSISTENCE -I. -I../llama/include
+CFLAGS     := -Wall -fopenmp -std=gnu++11 -DLL_PERSISTENCE -I. -I../llama/include
 LFLAGS     := 
 
 ifeq ($(VIMRUNTIME),)

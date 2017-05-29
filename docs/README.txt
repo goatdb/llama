@@ -96,7 +96,7 @@ You can use any other combination of these except combining ONE_VT and FLAT_VT.
 
 If you would like to use LLAMA in your project,
   1. Include llama.h in your code
-  2. Compile with -fopenmp -std=c++0x
+  2. Compile with -fopenmp -std=gnu++11
 
 Please refer to the following files for examples about how to use LLAMA:
   * tools/llama-load.cc - a stand-alone example that loads a LLAMA database
