@@ -266,7 +266,7 @@ int main(int argc, char** argv)
 
 	printf("\tNode\tPageRank\n");
 	for (size_t i = 0; i < max; i++) {
-		printf("%lu\t%lu\t%0.6lf\n", i+1, a[i].node, a[i].data);
+		printf("%lu\t%llu\t%0.6lf\n", i+1, (unsigned long long) a[i].node, a[i].data);
 	}
 
 	free(a);

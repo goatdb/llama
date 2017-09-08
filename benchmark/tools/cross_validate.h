@@ -423,7 +423,7 @@ int cross_validate_with_file(Graph& graph, const char* cross_validate_with,
             {
                 auto p = cv_graph.ro_graph().get_all_node_properties_64();
                 for (auto it = p.begin(); it != p.end(); it++)
-                    printf(" %lx", it->second->get(n));
+                    printf(" %llx", (long long) it->second->get(n));
             }
             printf("\n");
             printf("%15s:", "Experimental");
@@ -435,7 +435,7 @@ int cross_validate_with_file(Graph& graph, const char* cross_validate_with,
             {
                 auto p = graph.ro_graph().get_all_node_properties_64();
                 for (auto it = p.begin(); it != p.end(); it++)
-                    printf(" %lx", it->second->get(n));
+                    printf(" %llx", (long long) it->second->get(n));
             }
             printf("\n");
             return 1;

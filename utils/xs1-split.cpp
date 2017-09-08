@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
 	FILE* out_files[1 + n_small_files];
 	for (int i = 0; i <= n_small_files; i++) {
 		string s = s_out_base;
-		char b[16]; sprintf(b, "-part%d.dat", i);
+		char b[32]; sprintf(b, "-part%d.dat", i);
 		s += b;
 		out_files[i] = fopen(s.c_str(), "wb");
 		if (out_files[i] == NULL) {
